@@ -6,65 +6,53 @@ from datetime import timedelta
 import os
 import tempfile
 
-# 常量定義
+# Constants
 DEFAULT_MAX_DIFFERENCE = 0.5
 DEFAULT_FRAME_RATE = 30.0
 
 class XMLParser:
     @staticmethod
     def parse_xml(xml_path):
-        """解析XML文件，提取幀率和剪輯點"""
         tree = ET.parse(xml_path)
         root = tree.getroot()
-
         frame_rate = XMLParser._detect_frame_rate(root)
         cut_points = XMLParser._get_cut_points(root)
-
         return frame_rate, cut_points
 
     @staticmethod
     def _detect_frame_rate(root):
-        """從XML中檢測幀率"""
         rate_elements = root.findall(".//rate")
         for rate_element in rate_elements:
             timebase = rate_element.find("timebase")
             ntsc = rate_element.find("ntsc")
-
             if timebase is not None and timebase.text:
                 try:
                     frame_rate = float(timebase.text)
                     if ntsc is not None and ntsc.text.lower() == "true":
-                        frame_rate = frame_rate * 1000 / 1001  # NTSC調整
+                        frame_rate = frame_rate * 1000 / 1001  # NTSC adjustment
                     return frame_rate
                 except ValueError:
                     continue
-
         return DEFAULT_FRAME_RATE
 
     @staticmethod
     def _get_cut_points(root):
-        """從XML中提取剪輯點"""
         video_tracks = root.findall(".//video/track") + root.findall(".//video")
-
         cut_points = []
         for track in video_tracks:
             clipitems = track.findall(".//clipitem") + track.findall("clipitem")
             for clipitem in clipitems:
                 start_element = clipitem.find("start")
                 end_element = clipitem.find("end")
-
                 if start_element is not None and start_element.text and start_element.text != "0":
                     cut_points.append(int(start_element.text))
-
                 if end_element is not None and end_element.text and end_element.text != "-1":
                     cut_points.append(int(end_element.text))
-
         return cut_points
 
 class SRTParser:
     @staticmethod
     def parse_srt(srt_path):
-        """解析SRT文件，返回字幕數據"""
         with open(srt_path, "r", encoding="utf-8") as file:
             content = file.read()
         pattern = re.compile(r"(\d+:\d+:\d+,\d+) --> (\d+:\d+:\d+,\d+)\n(.*?)(?=\n\n|\Z)", re.DOTALL)
@@ -73,7 +61,6 @@ class SRTParser:
 
     @staticmethod
     def _srt_time_to_timedelta(srt_time_str):
-        """將SRT時間格式轉換為timedelta對象"""
         hours, minutes, seconds = srt_time_str.split(':')
         seconds, milliseconds = seconds.split(',')
         return timedelta(hours=int(hours), minutes=int(minutes), seconds=int(seconds), milliseconds=int(milliseconds))
@@ -85,11 +72,9 @@ class SubtitleAdjuster:
         self.max_difference_seconds = max_difference_seconds
 
     def _frame_to_timedelta(self, frame):
-        """將幀數轉換為timedelta對象"""
         return timedelta(seconds=frame / self.frame_rate)
 
     def adjust_subtitles(self, srt_data):
-        """調整字幕時間"""
         adjusted_srt_data = []
         for start_time, end_time, text in srt_data:
             new_start_time = self._get_closest_cut_time(start_time) or start_time
@@ -98,7 +83,6 @@ class SubtitleAdjuster:
         return adjusted_srt_data
 
     def _get_closest_cut_time(self, time):
-        """獲取最接近的剪輯時間點"""
         min_difference = timedelta(hours=9999)
         closest_cut_time = None
         for cut_time in self.cut_points:
@@ -111,7 +95,6 @@ class SubtitleAdjuster:
 class SRTWriter:
     @staticmethod
     def write_srt(srt_data):
-        """將調整後的字幕數據寫入SRT格式字符串"""
         srt_string = ""
         for i, (start_time, end_time, text) in enumerate(srt_data, start=1):
             srt_string += f"{i}\n"
@@ -121,7 +104,6 @@ class SRTWriter:
 
     @staticmethod
     def _timedelta_to_srt_time(timedelta_obj):
-        """將timedelta對象轉換為SRT時間格式"""
         total_seconds = int(timedelta_obj.total_seconds())
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
@@ -129,13 +111,10 @@ class SRTWriter:
         return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
 
 def process_files(xml_path, srt_path, max_difference_seconds):
-    """處理XML和SRT文件"""
     frame_rate, cut_points = XMLParser.parse_xml(xml_path)
     srt_data = SRTParser.parse_srt(srt_path)
-
     adjuster = SubtitleAdjuster(frame_rate, cut_points, max_difference_seconds)
     adjusted_srt_data = adjuster.adjust_subtitles(srt_data)
-
     return SRTWriter.write_srt(adjusted_srt_data), frame_rate
 
 def subtitle_time_sync():
@@ -196,16 +175,23 @@ def subtitle_time_sync():
                 adjusted_content, detected_frame_rate = process_files(
                     tmp_xml_path, tmp_srt_path, max_difference_seconds)
                 st.success(f"字幕時間同步完成！檢測到的幀率：{detected_frame_rate:.2f}")
+                
+                # Get original SRT filename (without extension)
+                original_filename = os.path.splitext(srt_file.name)[0]
+                
+                # Create new filename
+                new_filename = f"{original_filename}_synced.srt"
+                
                 st.download_button(
                     label="下載同步後的 SRT 字幕文件",
                     data=adjusted_content,
-                    file_name="同步後的字幕.srt",
+                    file_name=new_filename,
                     mime="text/plain"
                 )
             except Exception as e:
                 st.error(f"處理過程中出現錯誤：{str(e)}")
             finally:
-                # 清理臨時文件
+                # Clean up temporary files
                 os.unlink(tmp_xml_path)
                 os.unlink(tmp_srt_path)
 

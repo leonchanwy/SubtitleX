@@ -13,13 +13,13 @@ def ai_subtitle_generator():
     st.title('影片字幕生成')
 
     language_options = {
-        '中文': 'zh', '英文': 'en', '日文': 'ja', '韓文': 'ko', '德語': 'de', '法語': 'fr',
+        '中文': 'zh', '英文': 'en', '馬來語': 'ms', '日文': 'ja', '韓文': 'ko', '德語': 'de', '法語': 'fr',
         '阿非利堪斯語': 'af', '阿拉伯語': 'ar', '亞美尼亞語': 'hy', '亞塞拜然語': 'az',
         '白俄羅斯語': 'be', '波士尼亞語': 'bs', '保加利亞語': 'bg', '加泰隆尼亞語': 'ca',
         '克羅埃西亞語': 'hr', '捷克語': 'cs', '丹麥語': 'da', '荷蘭語': 'nl', '愛沙尼亞語': 'et',
         '芬蘭語': 'fi', '加利西亞語': 'gl', '希臘語': 'el', '希伯來語': 'he', '印地語': 'hi',
         '匈牙利語': 'hu', '冰島語': 'is', '印度尼西亞語': 'id', '義大利語': 'it', '卡納達語': 'kn',
-        '哈薩克語': 'kk', '拉脫維亞語': 'lv', '立陶宛語': 'lt', '馬其頓語': 'mk', '馬來語': 'ms',
+        '哈薩克語': 'kk', '拉脫維亞語': 'lv', '立陶宛語': 'lt', '馬其頓語': 'mk',
         '馬拉地語': 'mr', '毛利語': 'mi', '尼泊爾語': 'ne', '挪威語': 'no', '波斯語': 'fa',
         '波蘭語': 'pl', '葡萄牙語': 'pt', '羅馬尼亞語': 'ro', '俄語': 'ru', '塞爾維亞語': 'sr',
         '斯洛伐克語': 'sk', '斯洛維尼亞語': 'sl', '西班牙語': 'es', '斯瓦希里語': 'sw',
@@ -44,11 +44,14 @@ def ai_subtitle_generator():
         gdown.download(gdrive_url, output_file, quiet=False, fuzzy=True)
         with open(output_file, "rb") as f:
             uploaded_file = BytesIO(f.read())
+        original_filename = "gdrive_file"
+    elif uploaded_file is not None:
+        original_filename = os.path.splitext(uploaded_file.name)[0]
 
     if uploaded_file is not None:
         total_start_time = time.time()
 
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as temp_file:
             temp_file.write(uploaded_file.getvalue())
             temp_file_name = temp_file.name
 
@@ -61,14 +64,14 @@ def ai_subtitle_generator():
         if translate_to_english:
             with st.spinner("生成字幕並翻譯成英文中..."):
                 start_time = time.time()
-                srt_file = f"srt_{os.path.basename(temp_file_name)}_translated.srt"
+                srt_file = f"{original_filename}_en.srt"
                 translate_audio(compressed_file, srt_file, user_prompt, user_api_key, temperature)
                 elapsed_time = time.time() - start_time
                 st.write(f"生成字幕並翻譯成英文所需時間：{elapsed_time:.2f} 秒")
         else:
             with st.spinner("生成字幕中..."):
                 start_time = time.time()
-                srt_file = f"srt_{os.path.basename(temp_file_name)}.srt"
+                srt_file = f"{original_filename}_{language_options[selected_language]}.srt"
                 transcribe_audio(compressed_file, srt_file, language_options[selected_language], user_prompt, user_api_key, temperature)
                 elapsed_time = time.time() - start_time
                 st.write(f"生成字幕所需時間：{elapsed_time:.2f} 秒")
@@ -90,7 +93,6 @@ def ai_subtitle_generator():
         st.markdown("- [合併兩個字幕](https://subtitletools.com/merge-subtitles-online)")
         st.markdown("- [把雙行字幕變成英文大小50、中文大小75](https://colab.research.google.com/drive/16I1BLSC_LR6EFZOWGXBSJwIjJ4LfTq9s?usp=sharing)")
         st.markdown("- [生成內容摘要SRT](https://colab.research.google.com/drive/1VgfPTfmbU2kjJ7nMXkmNMWcVbvOyqX0N?usp=sharing)")
-
 
 if __name__ == "__main__":
     ai_subtitle_generator()

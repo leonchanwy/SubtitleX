@@ -6,7 +6,7 @@ import chardet
 import os
 import time
 
-def load_config():
+def load_configuration():
     config = configparser.ConfigParser()
     config_file = 'settings.cfg'
 
@@ -16,30 +16,30 @@ def load_config():
             encoding = chardet.detect(content)['encoding']
         config.read(config_file, encoding=encoding)
     else:
-        config['option'] = {'openai-apikey': '', 'target-language': ''}
+        config['settings'] = {'openai_api_key': '', 'default_first_language': '', 'default_second_language': ''}
         with open(config_file, 'w') as f:
             config.write(f)
 
     return config
 
 @st.cache_resource
-def get_openai_client(api_key):
+def initialize_openai_client(api_key):
     return OpenAI(api_key=api_key)
 
-def split_text(text):
+def split_text_into_chunks(text, max_chunk_size=1024):
     blocks = re.split(r'(\n\s*\n)', text)
-    short_text_list = []
-    short_text = ""
+    chunks = []
+    current_chunk = ""
     for block in blocks:
-        if len(short_text + block) <= 1024:
-            short_text += block
+        if len(current_chunk + block) <= max_chunk_size:
+            current_chunk += block
         else:
-            short_text_list.append(short_text)
-            short_text = block
-    short_text_list.append(short_text)
-    return short_text_list
+            chunks.append(current_chunk)
+            current_chunk = block
+    chunks.append(current_chunk)
+    return chunks
 
-def is_translation_valid(original_text, translated_text):
+def validate_translation_format(original_text, translated_text):
     original_blocks = original_text.strip().split('\n\n')
     translated_blocks = translated_text.strip().split('\n\n')
 
@@ -58,7 +58,7 @@ def is_translation_valid(original_text, translated_text):
 
     return True
 
-def translate_text(text, client, first_language, second_language, custom_prompt):
+def translate_subtitle_chunk(text, client, first_language, second_language, translation_instructions):
     max_retries = 3
     for _ in range(max_retries):
         try:
@@ -74,7 +74,7 @@ Follow this exact format for each subtitle:
 [{first_language} translation]
 [{second_language} translation]
 
-Maintain the original subtitle numbering and timing. {custom_prompt}
+Maintain the original subtitle numbering and timing. {translation_instructions}
 Do not include any introductory or explanatory text in your response.
 """},
                     {"role": "user", "content": text},
@@ -96,13 +96,13 @@ Do not include any introductory or explanatory text in your response.
 
             filtered_text = '\n'.join(filtered_lines).strip()
 
-            if is_translation_valid(text, filtered_text):
+            if validate_translation_format(text, filtered_text):
                 return filtered_text
         except Exception as e:
             st.error(f"翻譯錯誤：{e}")
     return text
 
-def validate_srt(srt_content):
+def validate_srt_format(srt_content):
     lines = srt_content.strip().split('\n')
     errors = []
     subtitle_count = 0
@@ -142,17 +142,17 @@ def validate_srt(srt_content):
     else:
         return False, "\n".join(errors)
 
-def process_srt_file(file, client, first_language, second_language, custom_prompt):
+def process_srt_file(file, client, first_language, second_language, translation_instructions):
     start_time = time.time()
     content = file.getvalue().decode("utf-8")
-    short_text_list = split_text(content)
+    text_chunks = split_text_into_chunks(content)
 
     translated_text = ""
     progress_bar = st.progress(0)
-    for i, short_text in enumerate(short_text_list):
-        translated_short_text = translate_text(short_text, client, first_language, second_language, custom_prompt)
-        translated_text += f"{translated_short_text}\n\n"
-        progress_bar.progress((i + 1) / len(short_text_list))
+    for i, chunk in enumerate(text_chunks):
+        translated_chunk = translate_subtitle_chunk(chunk, client, first_language, second_language, translation_instructions)
+        translated_text += f"{translated_chunk}\n\n"
+        progress_bar.progress((i + 1) / len(text_chunks))
 
     end_time = time.time()
     processing_time = end_time - start_time
@@ -205,22 +205,29 @@ def bilingual_srt_translator():
         st.session_state.processing_time = None
 
     # Load configuration
-    config = load_config()
-    default_api_key = config.get('option', 'openai-apikey', fallback='')
+    config = load_configuration()
+    default_api_key = config.get('settings', 'openai_api_key', fallback='')
+    default_first_language = config.get('settings', 'default_first_language', fallback='traditional chinese')
+    default_second_language = config.get('settings', 'default_second_language', fallback='malay')
 
     api_key = st.text_input("OpenAI API Key", value=default_api_key, type="password")
-    first_language = st.text_input("第一語言", value="traditional chinese")
-    second_language = st.text_input("第二語言", value="malay")
-    custom_prompt = st.text_area(
+    first_language = st.text_input("第一語言", value=default_first_language)
+    second_language = st.text_input("第二語言", value=default_second_language)
+    translation_instructions = st.text_area(
         "自定義翻譯提示",
         "第一個語言是台灣式口語加上髒話、第二個語言要極度口語"
     )
 
     # Initialize OpenAI client
-    client = get_openai_client(api_key)
+    client = initialize_openai_client(api_key)
 
     # File upload
     uploaded_file = st.file_uploader("選擇一個 SRT 文件", type="srt")
+
+    # Save original filename
+    original_filename = None
+    if uploaded_file is not None:
+        original_filename = uploaded_file.name
 
     # Translation button
     if uploaded_file is not None:
@@ -230,10 +237,10 @@ def bilingual_srt_translator():
             else:
                 with st.spinner("正在翻譯..."):
                     st.session_state.translated_srt, st.session_state.processing_time = process_srt_file(
-                        uploaded_file, client, first_language, second_language, custom_prompt)
+                        uploaded_file, client, first_language, second_language, translation_instructions)
 
                     # Validate translated SRT
-                    is_valid, validation_message = validate_srt(st.session_state.translated_srt)
+                    is_valid, validation_message = validate_srt_format(st.session_state.translated_srt)
                     if is_valid:
                         st.success("翻譯完成！SRT 格式驗證通過。")
                         st.info(validation_message)
@@ -246,11 +253,17 @@ def bilingual_srt_translator():
         st.subheader("翻譯預覽")
         st.text_area("", value=st.session_state.translated_srt[:1000] + "...", height=300)
 
+        # Generate new filename
+        if original_filename:
+            new_filename = f"{os.path.splitext(original_filename)[0]}_dual_language.srt"
+        else:
+            new_filename = "dual_language.srt"
+
         # Download button
         st.download_button(
             label="下載雙語 SRT",
             data=st.session_state.translated_srt,
-            file_name="dual_language.srt",
+            file_name=new_filename,
             mime="text/plain"
         )
 

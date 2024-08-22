@@ -1,4 +1,5 @@
 import streamlit as st
+import os
 
 def escape_html(unsafe):
     return (unsafe
@@ -93,15 +94,19 @@ def bilingual_subtitle_resizer():
 
     if uploaded_file is not None:
         srt_content = uploaded_file.getvalue().decode("utf-8")
+        original_filename = uploaded_file.name
 
         if st.button('轉換文件'):
             xml_content = srt_to_xml(srt_content, font_size_1, font_size_2)
             st.text_area("xml 輸出預覽", xml_content, height=300)
 
+            base_name = os.path.splitext(original_filename)[0]
+            new_filename = f"{base_name}_resized.xml"
+
             st.download_button(
                 label="下載 xml 文件",
                 data=xml_content,
-                file_name="output.xml",
+                file_name=new_filename,
                 mime="application/xml+xml"
             )
 
