@@ -133,7 +133,7 @@ def convert_simplified_to_traditional(text):
     converter = opencc.OpenCC('s2t')  # s2t 表示简体到繁体
     return converter.convert(text)
 
-def subtitle_corrector():
+def subtitle_correctorç√():
     st.title("SRT 字幕修正器")
 
     st.markdown("""
