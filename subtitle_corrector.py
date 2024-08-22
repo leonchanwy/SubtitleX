@@ -6,7 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import logging
-import opencc
+
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -129,10 +129,6 @@ def validate_srt_format(srt_content):
     return True, "Valid SRT format"
 
 
-def convert_simplified_to_traditional(text):
-    converter = opencc.OpenCC('s2t')  # s2t 表示简体到繁体
-    return converter.convert(text)
-
 def subtitle_corrector():
     st.title("SRT 字幕修正器")
 
@@ -180,10 +176,6 @@ def subtitle_corrector():
                     progress_bar, 
                     progress_text
                 )
-            
-            # 将修正后的内容从简体转换为繁体
-            st.session_state.corrected_srt = convert_simplified_to_traditional(st.session_state.corrected_srt)
-
             st.session_state.processing_time = time.time() - start_time
 
             # 驗證輸出的 SRT 格式

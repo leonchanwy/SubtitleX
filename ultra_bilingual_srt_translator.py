@@ -3,6 +3,7 @@ import streamlit as st
 import re
 import time
 import logging
+import os
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -116,6 +117,7 @@ def format_dual_target_srt(translated_subtitles, target_lang1, target_lang2):
 def ultra_bilingual_srt_translator():
     st.title("多語言字幕翻譯器")
 
+    # 輸入欄位
     api_key = st.text_input("Anthropic API 金鑰", type="password")
     target_lang1 = st.text_input("目標語言 1", value="traditional chinese")
     target_lang2 = st.text_input("目標語言 2", value="malay")
@@ -124,13 +126,20 @@ def ultra_bilingual_srt_translator():
 
     uploaded_file = st.file_uploader("選擇一個 SRT 文件", type="srt")
 
+    # 初始化 session state
     if 'translated_subtitles' not in st.session_state:
         st.session_state.translated_subtitles = None
+    if 'original_filename' not in st.session_state:
+        st.session_state.original_filename = None
 
+    # 翻譯過程
     if uploaded_file is not None and api_key and st.button("翻譯"):
         try:
             content = uploaded_file.getvalue().decode("utf-8-sig")
             subtitles = parse_srt(content)
+            
+            # 保存原始檔案名稱（不包括副檔名）
+            st.session_state.original_filename = os.path.splitext(uploaded_file.name)[0]
 
             client = get_anthropic_client(api_key)
 
@@ -150,6 +159,7 @@ def ultra_bilingual_srt_translator():
             st.error(f"處理過程中發生錯誤: {str(e)}")
             logger.exception("翻譯過程中發生異常")
 
+    # 顯示翻譯結果和下載選項
     if st.session_state.translated_subtitles is not None:
         download_option = st.selectbox(
             "選擇下載格式",
@@ -163,21 +173,22 @@ def ultra_bilingual_srt_translator():
         
         st.text_area("", value=preview_srt + "\n...", height=300)
 
+        original_name = st.session_state.original_filename
         if download_option == f"原文 + {target_lang1}":
             download_srt = format_bilingual_srt(st.session_state.translated_subtitles, True, target_lang1)
-            file_name = f"原文_{target_lang1}_subtitles.srt"
+            file_name = f"{original_name}_原文_{target_lang1}.srt"
         elif download_option == f"原文 + {target_lang2}":
             download_srt = format_bilingual_srt(st.session_state.translated_subtitles, True, target_lang2)
-            file_name = f"原文_{target_lang2}_subtitles.srt"
+            file_name = f"{original_name}_原文_{target_lang2}.srt"
         elif download_option == f"{target_lang1} + {target_lang2}":
             download_srt = format_dual_target_srt(st.session_state.translated_subtitles, target_lang1, target_lang2)
-            file_name = f"{target_lang1}_{target_lang2}_subtitles.srt"
+            file_name = f"{original_name}_{target_lang1}_{target_lang2}.srt"
         elif download_option == f"僅 {target_lang1}":
             download_srt = format_bilingual_srt(st.session_state.translated_subtitles, False, target_lang1)
-            file_name = f"{target_lang1}_subtitles.srt"
+            file_name = f"{original_name}_{target_lang1}.srt"
         else:
             download_srt = format_bilingual_srt(st.session_state.translated_subtitles, False, target_lang2)
-            file_name = f"{target_lang2}_subtitles.srt"
+            file_name = f"{original_name}_{target_lang2}.srt"
 
         st.download_button(
             label=f"下載 {download_option} 字幕",
