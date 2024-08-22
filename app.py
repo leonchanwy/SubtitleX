@@ -4,14 +4,14 @@ from subtitle_time_sync import subtitle_time_sync
 from bilingual_subtitle_resizer import bilingual_subtitle_resizer
 from bilingual_srt_translator import bilingual_srt_translator
 from ultra_bilingual_srt_translator import ultra_bilingual_srt_translator
-
+from subtitle_corrector import subtitle_corrector
 
 def main():
     st.sidebar.title("剪接神器")
 
     page = st.sidebar.radio("選擇功能",
-                            ("AI 生成字幕", "雙語字幕翻譯器", "字幕時間同步器", "雙語字幕大小調整器", "終極版：雙語字幕翻譯器"),
-                            captions=["把聲音轉譯成字幕","翻譯 SRT 文件","同步字幕與分鏡點的時間","調整雙語字幕大小", "測試用"])
+                            ("AI 生成字幕", "雙語字幕翻譯器", "終極版：雙語字幕翻譯器", "字幕時間同步器", "雙語字幕大小調整器", "字幕錯字修正器"),
+                            captions=["把聲音轉譯成字幕","翻譯 SRT 文件", "強化版翻譯工具", "同步字幕與分鏡點的時間","調整雙語字幕大小", "改錯字"])
 
     if page == "AI 生成字幕":
         ai_subtitle_generator()
@@ -23,6 +23,8 @@ def main():
         bilingual_srt_translator()
     elif page == "終極版：雙語字幕翻譯器":
         ultra_bilingual_srt_translator()
+    elif page == "字幕錯字修正器":
+        subtitle_corrector()
 
 if __name__ == "__main__":
     main()
