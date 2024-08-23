@@ -5,13 +5,14 @@ from bilingual_subtitle_resizer import bilingual_subtitle_resizer
 from bilingual_srt_translator import bilingual_srt_translator
 from ultra_bilingual_srt_translator import ultra_bilingual_srt_translator
 from subtitle_corrector import subtitle_corrector
+from whisper_api_tool import whisper_api_tool
 
 def main():
     st.sidebar.title("剪接神器")
 
     page = st.sidebar.radio("選擇功能",
-                            ("AI 生成字幕", "雙語字幕翻譯器", "終極版：雙語字幕翻譯器", "字幕時間同步器", "雙語字幕大小調整器", "字幕錯字修正器"),
-                            captions=["把聲音轉譯成字幕","翻譯 SRT 文件", "強化版翻譯工具", "同步字幕與分鏡點的時間","調整雙語字幕大小", "改錯字"])
+                            ("AI 生成字幕", "雙語字幕翻譯器", "終極版：雙語字幕翻譯器", "字幕時間同步器", "雙語字幕大小調整器", "字幕錯字修正器", "Whisper API 功能"),
+                            captions=["把聲音轉譯成字幕","翻譯 SRT 文件", "強化版翻譯工具", "同步字幕與分鏡點的時間","調整雙語字幕大小", "改錯字", "使用 Whisper API 的功能"])
 
     if page == "AI 生成字幕":
         ai_subtitle_generator()
@@ -25,6 +26,8 @@ def main():
         ultra_bilingual_srt_translator()
     elif page == "字幕錯字修正器":
         subtitle_corrector()
+    elif page == "Whisper API 功能":
+        whisper_api_tool()
 
 if __name__ == "__main__":
     main()
