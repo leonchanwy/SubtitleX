@@ -17,16 +17,19 @@ MAX_WORKERS = 5
 MODEL_NAME = "gpt-4o-2024-08-06"
 
 # 初始化 session state
-if 'corrected_srt' not in st.session_state:
-    st.session_state.corrected_srt = None
-if 'changes' not in st.session_state:
-    st.session_state.changes = None
-if 'processing_time' not in st.session_state:
-    st.session_state.processing_time = None
-if 'edited_changes' not in st.session_state:
-    st.session_state.edited_changes = None
-if 'corrected_subtitles' not in st.session_state:
-    st.session_state.corrected_subtitles = None
+def init_session_state():
+    if 'corrected_srt' not in st.session_state:
+        st.session_state.corrected_srt = None
+    if 'changes' not in st.session_state:
+        st.session_state.changes = None
+    if 'processing_time' not in st.session_state:
+        st.session_state.processing_time = None
+    if 'edited_changes' not in st.session_state:
+        st.session_state.edited_changes = None
+    if 'corrected_subtitles' not in st.session_state:
+        st.session_state.corrected_subtitles = None
+
+init_session_state()
 
 def load_correction_terms():
     try:
@@ -150,6 +153,7 @@ def update_srt_with_edits(corrected_subtitles, edited_changes):
     return "\n".join(formatted_subtitles)
 
 def subtitle_corrector():
+    init_session_state()
     st.title("SRT 字幕修正器")
 
     api_key = st.text_input("输入您的 OpenAI API Key", type="password")
@@ -204,7 +208,8 @@ def subtitle_corrector():
             st.error(f"处理过程中发生错误：{str(e)}")
             logger.exception("处理文件时发生异常")
 
-    if st.session_state.corrected_srt is not None:
+    # 使用 get 方法安全地访问 session state
+    if st.session_state.get('corrected_srt') is not None:
         st.subheader("修正后的内容")
         st.text_area("", value=st.session_state.corrected_srt, height=300)
 
@@ -215,7 +220,7 @@ def subtitle_corrector():
             "text/plain"
         )
 
-        if st.session_state.changes:
+        if st.session_state.get('changes'):
             st.subheader("修正详情（可编辑）")
             edited_changes = []
             for index, original, corrected in st.session_state.edited_changes:
