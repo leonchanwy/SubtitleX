@@ -7,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import logging
 
-
 # 設置日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -24,6 +23,10 @@ if 'changes' not in st.session_state:
     st.session_state.changes = None
 if 'processing_time' not in st.session_state:
     st.session_state.processing_time = None
+if 'edited_changes' not in st.session_state:
+    st.session_state.edited_changes = None
+if 'corrected_subtitles' not in st.session_state:
+    st.session_state.corrected_subtitles = None
 
 def load_correction_terms():
     try:
@@ -54,13 +57,22 @@ def correct_subtitle(client, subtitle, correction_terms):
     try:
         completion = client.chat.completions.create(
             model=MODEL_NAME,
+            temperature=0.2,
             messages=[
                 {"role": "system", "content": f"""
-Please correct the following subtitle content. Only correct errors related to the provided correction terms.
-If there's nothing to correct, return the original text. Do not add any explanations or comments.
+                你是一位精準的字幕校對專家。你的任務是檢查並修正字幕中的錯誤，嚴格遵守以下規則：
+                1. 重點更正地名、人名和民族名的錯誤。
+                2. 修正明顯的錯別字。
+                3. 僅使用提供的修正術語列表中的英文詞彙進行更正。即使術語有對應的中文名稱，也只使用英文版本進行更正。
+                4. 保持原有的繁簡體形式，絕對不進行繁簡轉換。
+                5. 不改變原文的語氣、語調或風格。
+                6. 不添加、刪除或重組句子結構以及標點符號。
+                7. 如果沒有需要更正的內容，完全保留原文。
 
-Correction terms: {', '.join(correction_terms)}
-"""},
+                修正術語列表： {', '.join(correction_terms)}
+
+                請嚴格按照這些規則進行校對，確保只進行必要且符合規則的更正。
+                """},
                 {"role": "user", "content": original_content},
             ]
         )
@@ -85,7 +97,7 @@ def process_srt(client, srt_content, correction_terms, progress_bar, progress_te
             index, start, end, original, corrected = future.result()
             corrected_subtitles.append((index, start, end, corrected))
             if original != corrected:
-                changes.append((original, corrected))
+                changes.append((index, original, corrected))
             progress = (i + 1) / len(subtitles)
             progress_bar.progress(progress)
             progress_text.text(f"處理進度: {progress:.2%}")
@@ -93,63 +105,71 @@ def process_srt(client, srt_content, correction_terms, progress_bar, progress_te
     # 根據開始時間對字幕進行排序
     corrected_subtitles.sort(key=lambda x: parse_time(x[1]))
 
-    # 重新編號字幕
-    formatted_subtitles = []
-    for i, (_, start, end, content) in enumerate(corrected_subtitles, 1):
-        formatted_subtitles.append(f"{i}\n{start} --> {end}\n{content}\n")
-
-    return "\n".join(formatted_subtitles), changes
+    return corrected_subtitles, changes
 
 def validate_srt_format(srt_content):
     lines = srt_content.split('\n')
     i = 0
+    subtitle_count = 0
+
+    # 跳過文件開頭的空行
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+
     while i < len(lines):
-        # 跳过空行
-        if not lines[i].strip():
-            i += 1
-            continue
-        
         # 檢查字幕編號
         if not lines[i].strip().isdigit():
-            return False, f"Invalid subtitle number at line {i+1}"
+            return False, f"無效的字幕編號在第 {i+1} 行: '{lines[i]}'"
+        subtitle_count += 1
         i += 1
-        
+
+        # 檢查是否還有足夠的行數
+        if i + 1 >= len(lines):
+            return False, f"字幕 {subtitle_count} 不完整，缺少時間戳或內容"
+
         # 檢查時間戳格式
-        if i >= len(lines) or not re.match(r'\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}', lines[i]):
-            return False, f"Invalid timestamp format at line {i+1}"
+        if not re.match(r'\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}', lines[i].strip()):
+            return False, f"無效的時間戳格式在第 {i+1} 行: '{lines[i]}'"
         i += 1
-        
+
         # 檢查字幕內容
-        if i >= len(lines):
-            return False, "Missing subtitle content"
+        if not lines[i].strip():
+            return False, f"字幕 {subtitle_count} 缺少內容"
         while i < len(lines) and lines[i].strip():
             i += 1
         i += 1
-    
-    return True, "Valid SRT format"
 
+    if subtitle_count == 0:
+        return False, "SRT 文件沒有包含任何字幕"
+
+    return True, f"有效的 SRT 格式，包含 {subtitle_count} 個字幕"
+
+def update_srt_with_edits(corrected_subtitles, edited_changes):
+    # 創建一個字典，鍵為字幕索引，值為編輯後的內容
+    edits_dict = {index: corrected for index, _, corrected in edited_changes}
+    
+    # 更新字幕內容
+    updated_subtitles = [
+        (index, start, end, edits_dict.get(index, content))
+        for index, start, end, content in corrected_subtitles
+    ]
+    
+    # 格式化更新後的字幕
+    formatted_subtitles = []
+    for i, (_, start, end, content) in enumerate(updated_subtitles, 1):
+        formatted_subtitles.append(f"{i}\n{start} --> {end}\n{content}\n")
+    
+    return "\n".join(formatted_subtitles)
 
 def subtitle_corrector():
     st.title("SRT 字幕修正器")
 
-    st.markdown("""
-    ### 使用說明
-    1. 輸入您的 OpenAI API Key。
-    2. 添加或編輯修正術語，每行一個。
-    3. 上傳 SRT 格式的字幕文件。
-    4. 點擊"修正字幕"按鈕開始處理。
-    5. 查看修正結果和詳情。
-    6. 下載修正後的 SRT 文件。
-    """)
-
     api_key = st.text_input("輸入您的 OpenAI API Key", type="password")
     correction_terms = st.text_area("輸入修正術語，每行一個", value="\n".join(load_correction_terms()))
-
 
     if st.button("保存修正術語"):
         save_correction_terms(correction_terms.split('\n'))
         st.success("修正術語已保存")
-
 
     uploaded_file = st.file_uploader("上傳 SRT 文件", type="srt")
 
@@ -169,7 +189,7 @@ def subtitle_corrector():
         start_time = time.time()
         try:
             with st.spinner("正在處理..."):
-                st.session_state.corrected_srt, st.session_state.changes = process_srt(
+                st.session_state.corrected_subtitles, st.session_state.changes = process_srt(
                     client, 
                     srt_content, 
                     correction_terms.split('\n'), 
@@ -177,6 +197,13 @@ def subtitle_corrector():
                     progress_text
                 )
             st.session_state.processing_time = time.time() - start_time
+            
+            # 格式化修正後的字幕
+            st.session_state.corrected_srt = "\n".join([
+                f"{i}\n{start} --> {end}\n{content}\n"
+                for i, (_, start, end, content) in enumerate(st.session_state.corrected_subtitles, 1)
+            ])
+            st.session_state.edited_changes = st.session_state.changes.copy()  # 初始化編輯後的更改
 
             # 驗證輸出的 SRT 格式
             is_valid, message = validate_srt_format(st.session_state.corrected_srt)
@@ -201,9 +228,31 @@ def subtitle_corrector():
         )
 
         if st.session_state.changes:
-            st.subheader("修正詳情")
-            changes_df = pd.DataFrame(st.session_state.changes, columns=["原文", "修正後"])
-            st.dataframe(changes_df)
+            st.subheader("修正詳情（可編輯）")
+            edited_changes = []
+            for index, original, corrected in st.session_state.edited_changes:
+                col1, col2, col3 = st.columns([1, 2, 2])
+                with col1:
+                    st.text(f"字幕 {index}")
+                with col2:
+                    st.text_area(f"原文 {index}", value=original, key=f"original_{index}", height=100)
+                with col3:
+                    edited = st.text_area(f"修正後 {index}", value=corrected, key=f"corrected_{index}", height=100)
+                edited_changes.append((index, original, edited))
+            
+            st.session_state.edited_changes = edited_changes
+
+            if st.button("應用編輯"):
+                updated_srt = update_srt_with_edits(st.session_state.corrected_subtitles, st.session_state.edited_changes)
+                st.session_state.corrected_srt = updated_srt
+                st.success("已應用您的編輯到 SRT 文件")
+                
+                st.download_button(
+                    "下載編輯後的 SRT",
+                    updated_srt,
+                    "edited_corrected.srt",
+                    "text/plain"
+                )
         else:
             st.info("未發現需要修正的內容")
 

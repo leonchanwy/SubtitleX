@@ -1,21 +1,23 @@
 import streamlit as st
 import os
+import re
 
-def escape_html(unsafe):
-    return (unsafe
+def format_time(time):
+    # 將SRT格式的時間轉換為XML格式
+    hours, minutes, seconds = time.replace(',', '.').split(':')
+    return f"{int(hours):02d}:{int(minutes):02d}:{float(seconds):06.3f}"
+
+def escape_html(text):
+    return (text
             .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
             .replace('"', "&quot;")
             .replace("'", "&#039;"))
 
-def format_time(time):
-    return time.replace(',', '.')
-
 def srt_to_xml(srt_content, font_size_1, font_size_2):
-    srt_lines = srt_content.strip().split('\n\n')
     xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
-<tt xmlns="http://www.w3.org/ns/xml" xmlns:tts="http://www.w3.org/ns/xml#styling">
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tts="http://www.w3.org/ns/ttml#styling">
   <head>
     <styling>
       <style xml:id="style1" tts:fontSize="{font_size_1}px" tts:fontFamily="Noto Sans CJK TC" tts:fontWeight="bold" tts:textShadow="2px 2px 2px black" tts:textAlign="center" tts:displayAlign="after"/>
@@ -25,22 +27,23 @@ def srt_to_xml(srt_content, font_size_1, font_size_2):
   <body>
     <div>'''
 
-    for srt_line in srt_lines:
-        lines = srt_line.split('\n')
+    srt_entries = re.split(r'\n\s*\n', srt_content.strip())
+    
+    for entry in srt_entries:
+        lines = entry.strip().split('\n')
+        if len(lines) < 3:
+            continue  # 跳過不完整的條目
+        
         index = lines[0]
-        start_time, end_time = map(format_time, lines[1].split(' --> '))
-
-        num_lines = len(lines[2:])
-        for i, line in enumerate(lines[2:]):
+        time_line = lines[1]
+        text_lines = lines[2:]
+        
+        start_time, end_time = map(format_time, time_line.split(' --> '))
+        
+        for i, line in enumerate(text_lines):
             escaped_line = escape_html(line)
-            if num_lines == 1:
-                style_id = "style1"
-            else:
-                if i == 0 and line.startswith("-"):
-                    style_id = "style1"
-                else:
-                    style_id = "style1" if i == 0 else "style2"
-
+            style_id = "style1" if i == 0 else "style2"
+            
             xml_content += f'''
       <p xml:id="caption{index}_{i+1}" begin="{start_time}" end="{end_time}" style="{style_id}">{escaped_line}</p>'''
 
@@ -54,35 +57,7 @@ def srt_to_xml(srt_content, font_size_1, font_size_2):
 def bilingual_subtitle_resizer():
     st.title('雙語字幕大小調整器')
 
-    st.write("這個工具可以幫助您調整雙語字幕的字體大小，並將 SRT 格式轉換為 xml 格式。")
-
-    with st.expander("點擊展開查看詳細說明"):
-        st.markdown("""
-        ### 應用簡介
-        這個工具專為處理雙語字幕而設計，能夠調整不同語言字幕的字體大小，並將常見的 SRT 格式轉換為更靈活的 xml 格式：
-
-        1. **自定義字體大小**：分別為兩種語言的字幕設置不同的字體大小。
-        2. **格式轉換**：將 SRT 格式的字幕文件轉換為 xml 格式。
-
-        ### 主要功能
-        - 允許用戶自定義兩種語言字幕的字體大小
-        - 讀取 SRT 格式的字幕文件
-        - 將 SRT 格式轉換為 xml 格式
-        - 生成可下載的 xml 文件
-
-        ### 使用步驟
-        1. 設置第一語言（通常是主要語言）的字體大小。
-        2. 設置第二語言的字體大小。
-        3. 上傳 SRT 格式的字幕文件。
-        4. 點擊「轉換文件」按鈕。
-        5. 預覽生成的 xml 內容。
-        6. 下載轉換後的 xml 文件。
-
-        ### 注意事項
-        - 確保上傳的 SRT 文件格式正確。
-        - xml 格式更適合需要精確控制字幕樣式的場景。
-        - 轉換後的 xml 文件使用 UTF-8 編碼，確保與大多數現代系統兼容。
-        """)
+    st.write("這個工具可以幫助您調整雙語字幕的字體大小，並將 SRT 格式轉換為 XML 格式。")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -93,21 +68,21 @@ def bilingual_subtitle_resizer():
     uploaded_file = st.file_uploader("選擇一個 SRT 文件", type="srt")
 
     if uploaded_file is not None:
-        srt_content = uploaded_file.getvalue().decode("utf-8")
+        srt_content = uploaded_file.getvalue().decode("utf-8-sig")
         original_filename = uploaded_file.name
 
         if st.button('轉換文件'):
             xml_content = srt_to_xml(srt_content, font_size_1, font_size_2)
-            st.text_area("xml 輸出預覽", xml_content, height=300)
+            st.text_area("XML 輸出預覽", xml_content, height=300)
 
             base_name = os.path.splitext(original_filename)[0]
             new_filename = f"{base_name}_resized.xml"
 
             st.download_button(
-                label="下載 xml 文件",
-                data=xml_content,
+                label="下載 XML 文件",
+                data=xml_content.encode('utf-8'),
                 file_name=new_filename,
-                mime="application/xml+xml"
+                mime="application/xml"
             )
 
 if __name__ == "__main__":
