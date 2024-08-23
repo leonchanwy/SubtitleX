@@ -112,32 +112,41 @@ def validate_srt_format(srt_content):
     i = 0
     subtitle_count = 0
 
-    # 跳過文件開頭的空行
-    while i < len(lines) and not lines[i].strip():
-        i += 1
-
     while i < len(lines):
-        # 檢查字幕編號
-        if not lines[i].strip().isdigit():
-            return False, f"無效的字幕編號在第 {i+1} 行: '{lines[i]}'"
+        # 跳過空行
+        while i < len(lines) and not lines[i].strip():
+            i += 1
+        if i >= len(lines):
+            break
+
+        # 檢查字幕編號，允許任何非空字符串
+        if not lines[i].strip():
+            return False, f"預期字幕編號，但在第 {i+1} 行找到空行"
         subtitle_count += 1
         i += 1
 
         # 檢查是否還有足夠的行數
-        if i + 1 >= len(lines):
+        if i >= len(lines):
             return False, f"字幕 {subtitle_count} 不完整，缺少時間戳或內容"
 
-        # 檢查時間戳格式
-        if not re.match(r'\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}', lines[i].strip()):
-            return False, f"無效的時間戳格式在第 {i+1} 行: '{lines[i]}'"
+        # 檢查時間戳格式，使用更寬鬆的正則表達式
+        if not re.search(r'\d+:\d+:\d+[,\.]\d+\s*-->\s*\d+:\d+:\d+[,\.]\d+', lines[i], re.IGNORECASE):
+            return False, f"無效的時間戳格式在第 {i+1} 行: '{lines[i].strip()}'"
         i += 1
 
         # 檢查字幕內容
-        if not lines[i].strip():
+        content_found = False
+        while i < len(lines):
+            if lines[i].strip():
+                content_found = True
+                i += 1
+            elif content_found:
+                break
+            else:
+                i += 1
+        
+        if not content_found:
             return False, f"字幕 {subtitle_count} 缺少內容"
-        while i < len(lines) and lines[i].strip():
-            i += 1
-        i += 1
 
     if subtitle_count == 0:
         return False, "SRT 文件沒有包含任何字幕"
