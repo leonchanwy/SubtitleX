@@ -55,7 +55,7 @@ def srt_to_xml(srt_content, font_size_1, font_size_2):
     return xml_content
 
 def bilingual_subtitle_resizer():
-
+    st.title("🦊 雙語字幕大小調整器")
     st.write("這個工具可以幫助您調整雙語字幕的字體大小，並將 SRT 格式轉換為 XML 格式。")
 
     col1, col2 = st.columns(2)

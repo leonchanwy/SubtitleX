@@ -43,7 +43,7 @@ def text_to_speech(text, model, voice, response_format, speed):
     return response.content
 
 def whisper_api_tool():
-
+    st.title("🇯🇵 Whisper API Tool")
     api_key = st.text_input("輸入您的 OpenAI API Key", value=st.session_state.api_key, type="password")
     if api_key != st.session_state.api_key:
         st.session_state.api_key = api_key

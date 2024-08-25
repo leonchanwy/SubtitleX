@@ -86,8 +86,6 @@ def main():
                                       "同步字幕與分鏡點的時間", "調整雙語字幕大小", "改錯字", 
                                       "使用 Whisper API 的功能"])
 
-    st.title(page)
-
     if not st.session_state.api_key_valid:
         st.warning("請在側邊欄輸入有效的 OpenAI API Key 以使用此功能")
     else:

@@ -183,7 +183,7 @@ def update_srt_with_edits(corrected_subtitles, edited_changes):
 def subtitle_corrector():
     # 初始化 session state
     init_session_state()
-
+    st.title("🗾 字幕錯字修正器")
     # API Key 输入
     api_key = st.text_input("OpenAI API Key", value=st.session_state.api_key, type="password")
     if api_key != st.session_state.api_key:

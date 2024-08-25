@@ -192,7 +192,7 @@ def save_api_key(api_key: str):
         file.write(api_key)
 
 def multi_language_subtitle_translator():
-    st.title("🌐 多語言字幕翻譯器")
+    st.title("🌐 終極版：雙語字幕翻譯器（Claude）")
 
     saved_api_key = load_api_key()
     api_key = st.text_input("Anthropic API 密鑰", value=saved_api_key, type="password")

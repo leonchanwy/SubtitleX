@@ -27,6 +27,7 @@ def validate_api_key(api_key):
 def ai_subtitle_generator():
     # Initialize session state
     init_session_state()
+    st.title("🚀 AI 生成字幕")
 
     # API Key input in main interface
     api_key = st.text_input("OpenAI API Key", value=st.session_state.api_key, type="password")
