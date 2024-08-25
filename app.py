@@ -24,16 +24,31 @@ def validate_api_key(api_key):
         return False
 
 def api_key_input():
-    api_key = st.sidebar.text_input("輸入您的 OpenAI API Key", value=st.session_state.api_key, type="password", key="api_key_input")
-
+    # 從localStorage獲取API Key
+    api_key = st.sidebar.text_input(
+        "輸入您的 OpenAI API Key",
+        value=st.session_state.api_key,
+        type="password",
+        key="api_key_input"
+    )
+    
     message_placeholder = st.sidebar.empty()
-
+    
     if api_key != st.session_state.api_key:
         st.session_state.api_key = api_key
         if api_key:
             if validate_api_key(api_key):
                 message_placeholder.success("API Key 有效")
                 st.session_state.api_key_valid = True
+                # 將有效的API Key保存到localStorage
+                st.markdown(
+                    """
+                    <script>
+                    localStorage.setItem('openai_api_key', '{}');
+                    </script>
+                    """.format(api_key),
+                    unsafe_allow_html=True
+                )
                 time.sleep(0.5)
                 message_placeholder.empty()
             else:
@@ -45,6 +60,20 @@ def api_key_input():
 def main():
     st.set_page_config(page_title="剪接神器", layout="wide")
     init_session_state()
+
+    # 從localStorage讀取API Key
+    st.markdown(
+        """
+        <script>
+        var api_key = localStorage.getItem('openai_api_key');
+        if (api_key) {
+            document.querySelector('input[type="password"]').value = api_key;
+            document.querySelector('input[type="password"]').dispatchEvent(new Event('input'));
+        }
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
 
     st.sidebar.title("剪接神器")
 
@@ -80,5 +109,5 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 剪接神器. All rights reserved.")
 
-if name == "main":
+if __name__ == "__main__":
     main()
