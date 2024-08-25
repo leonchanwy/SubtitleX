@@ -6,12 +6,9 @@ from pydub import AudioSegment
 import requests
 import gdown
 
-
-
 def download_video_from_google_drive(google_drive_video_link, output_file_name):
-        gdown.download(google_drive_video_link, output_file_name, quiet=False)
-        print(f"影片已成功下載並儲存為：{output_file_name}")
-
+    gdown.download(google_drive_video_link, output_file_name, quiet=False)
+    print(f"影片已成功下載並儲存為：{output_file_name}")
 
 def compress_audio(input_file, target_size=21):
     target_size_bytes = target_size * 1000 * 1000
@@ -33,7 +30,6 @@ def compress_audio(input_file, target_size=21):
     return output_file
 
 def transcribe_audio(compressed_file, srt_file, language, prompt, api_key, temperature):
-    
     with open(compressed_file, 'rb') as f:
         response = requests.post(
             'https://api.openai.com/v1/audio/transcriptions',
@@ -41,7 +37,7 @@ def transcribe_audio(compressed_file, srt_file, language, prompt, api_key, tempe
                 'Authorization': f'Bearer {api_key}'},
             data={
                 'model': 'whisper-1',
-                'language': language, #這裏可以改你想轉譯的文字'zh'是中文'ja'是日文、'en'是英文
+                'language': language,
                 'prompt': prompt,
                 'response_format': 'srt',
                 'temperature': temperature,
@@ -57,7 +53,6 @@ def transcribe_audio(compressed_file, srt_file, language, prompt, api_key, tempe
         raise Exception(f"Error transcribing audio: {response.text}")
 
 def translate_audio(compressed_file, srt_file, prompt, api_key, temperature):
-    
     with open(compressed_file, 'rb') as f:
         response = requests.post(
             'https://api.openai.com/v1/audio/translations',
@@ -84,6 +79,6 @@ if __name__ == "__main__":
     output_file_name = "video.mp4"
     srt_file = f"srt_{os.path.basename(output_file_name)}.srt"
     compressed_file = compress_audio(output_file_name)
-    transcribe_audio(compressed_file, srt_file)
+    # Note: The following line is commented out as it requires an API key
+    # transcribe_audio(compressed_file, srt_file, 'zh', 'Your prompt here', 'Your API key here', 0.6)
     print("字幕檔案已儲存為：", srt_file)
-

@@ -154,7 +154,7 @@ class SRTProcessor:
         return "\n".join(output).strip()
 
 def ultra_bilingual_srt_translator():
-    st.title("多語言字幕翻譯器")
+    # st.title("多語言字幕翻譯器")
 
     api_key = st.text_input("Anthropic API金鑰", type="password")
     target_lang1 = st.selectbox("目標語言1", options=LANGUAGE_OPTIONS, index=LANGUAGE_OPTIONS.index("廣東話口語"))

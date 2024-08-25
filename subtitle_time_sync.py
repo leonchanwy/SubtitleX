@@ -8,7 +8,7 @@ import tempfile
 
 # Constants
 DEFAULT_MAX_DIFFERENCE = 0.5
-DEFAULT_FRAME_RATE = 30.0
+DEFAULT_FRAME_RATE = 29.97
 
 class XMLParser:
     @staticmethod
@@ -118,7 +118,6 @@ def process_files(xml_path, srt_path, max_difference_seconds):
     return SRTWriter.write_srt(adjusted_srt_data), frame_rate
 
 def subtitle_time_sync():
-    st.title("字幕時間同步器")
 
     st.write("這個工具可以幫助您將 SRT 格式的字幕文件與影片的實際剪輯時間點同步。")
 

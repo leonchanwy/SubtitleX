@@ -8,9 +8,31 @@ import datetime
 from generate_subtitles import compress_audio, transcribe_audio, translate_audio
 import base64
 from io import BytesIO
+from openai import OpenAI
+
+def init_session_state():
+    if 'api_key' not in st.session_state:
+        st.session_state.api_key = ''
+    if 'api_key_valid' not in st.session_state:
+        st.session_state.api_key_valid = False
+
+def validate_api_key(api_key):
+    client = OpenAI(api_key=api_key)
+    try:
+        client.models.list()
+        return True
+    except Exception:
+        return False
 
 def ai_subtitle_generator():
-    st.title('影片字幕生成')
+    # Initialize session state
+    init_session_state()
+
+    # API Key input in main interface
+    api_key = st.text_input("OpenAI API Key", value=st.session_state.api_key, type="password")
+    if api_key != st.session_state.api_key:
+        st.session_state.api_key = api_key
+        st.session_state.api_key_valid = validate_api_key(api_key)
 
     language_options = {
         '中文': 'zh', '英文': 'en', '馬來語': 'ms', '日文': 'ja', '韓文': 'ko', '德語': 'de', '法語': 'fr',
@@ -33,8 +55,7 @@ def ai_subtitle_generator():
     user_prompt = st.text_input('請輸入 Prompt 以改進轉譯品質（如果轉譯語言不是中文，要刪去預設內容）：',
                                 default_prompt,
                                 help='提示可幫助改善轉譯。模型會匹配提示風格。')
-    temperature = st.number_input('請輸入 Temperature：', value=0.6)
-    user_api_key = st.text_input('請輸入您的 Open AI API 金鑰：', type="password")
+    temperature = st.number_input('請輸入 Temperature：', value=0.4)
 
     gdrive_url = st.text_input("或輸入 Google Drive 連結:")
     uploaded_file = st.file_uploader("或請上傳 MP3 或 MP4 檔案：", type=["mp3", "mp4"])
@@ -48,7 +69,7 @@ def ai_subtitle_generator():
     elif uploaded_file is not None:
         original_filename = os.path.splitext(uploaded_file.name)[0]
 
-    if uploaded_file is not None:
+    if uploaded_file is not None and st.session_state.api_key_valid:
         total_start_time = time.time()
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as temp_file:
@@ -65,14 +86,14 @@ def ai_subtitle_generator():
             with st.spinner("生成字幕並翻譯成英文中..."):
                 start_time = time.time()
                 srt_file = f"{original_filename}_en.srt"
-                translate_audio(compressed_file, srt_file, user_prompt, user_api_key, temperature)
+                translate_audio(compressed_file, srt_file, user_prompt, st.session_state.api_key, temperature)
                 elapsed_time = time.time() - start_time
                 st.write(f"生成字幕並翻譯成英文所需時間：{elapsed_time:.2f} 秒")
         else:
             with st.spinner("生成字幕中..."):
                 start_time = time.time()
                 srt_file = f"{original_filename}_{language_options[selected_language]}.srt"
-                transcribe_audio(compressed_file, srt_file, language_options[selected_language], user_prompt, user_api_key, temperature)
+                transcribe_audio(compressed_file, srt_file, language_options[selected_language], user_prompt, st.session_state.api_key, temperature)
                 elapsed_time = time.time() - start_time
                 st.write(f"生成字幕所需時間：{elapsed_time:.2f} 秒")
 
@@ -93,6 +114,8 @@ def ai_subtitle_generator():
         st.markdown("- [合併兩個字幕](https://subtitletools.com/merge-subtitles-online)")
         st.markdown("- [把雙行字幕變成英文大小50、中文大小75](https://colab.research.google.com/drive/16I1BLSC_LR6EFZOWGXBSJwIjJ4LfTq9s?usp=sharing)")
         st.markdown("- [生成內容摘要SRT](https://colab.research.google.com/drive/1VgfPTfmbU2kjJ7nMXkmNMWcVbvOyqX0N?usp=sharing)")
+    elif not st.session_state.api_key_valid:
+        st.warning("請先輸入有效的 OpenAI API Key。")
 
 if __name__ == "__main__":
     ai_subtitle_generator()
