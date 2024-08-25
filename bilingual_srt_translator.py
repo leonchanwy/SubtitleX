@@ -17,6 +17,12 @@ TEMPERATURE = 0.1
 BATCH_SIZE = 30
 LANGUAGE_OPTIONS = ["繁體中文", "英文", "日文", "馬來語", "廣東話口語", "德文"]
 
+def init_session_state():
+    if 'api_key' not in st.session_state:
+        st.session_state.api_key = ''
+    if 'api_key_valid' not in st.session_state:
+        st.session_state.api_key_valid = False
+
 class SubtitleProcessor:
     @staticmethod
     def parse_srt(content: str) -> List[Tuple[str, str, str]]:
@@ -185,12 +191,13 @@ def save_api_key(api_key: str):
         file.write(api_key)
 
 def bilingual_srt_translator():
+    init_session_state()
     st.title("🌐 雙語字幕翻譯器（GPT-4o）")
 
-    saved_api_key = load_api_key()
-    api_key = st.text_input("Open AI API 密鑰", value=saved_api_key, type="password")
-    if api_key and api_key != saved_api_key:
-        save_api_key(api_key)
+    api_key = st.text_input("OpenAI API Key", value=st.session_state.api_key, type="password")
+    if api_key != st.session_state.api_key:
+        st.session_state.api_key = api_key
+        st.session_state.api_key_valid = validate_api_key(api_key)
 
     col1, col2 = st.columns(2)
     with col1:

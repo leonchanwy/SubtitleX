@@ -181,23 +181,37 @@ class SubtitleTranslator:
         self.conversation_history = []
 
 def load_api_key() -> Optional[str]:
-    try:
-        with open('api_key.txt', 'r') as file:
-            return file.read().strip()
-    except FileNotFoundError:
-        return None
+    return None
 
 def save_api_key(api_key: str):
     with open('api_key.txt', 'w') as file:
         file.write(api_key)
 
+def validate_api_key(api_key: str) -> bool:
+    try:
+        client = Anthropic(api_key=api_key)
+        # 嘗試進行一個簡單的 API 調用來驗證密鑰
+        client.messages.create(
+            model="claude-3-5-sonnet-20240620",
+            max_tokens=10,
+            messages=[{"role": "user", "content": "Hello"}]
+        )
+        return True
+    except (APIConnectionError, APIStatusError):
+        return False
+
 def multi_language_subtitle_translator():
     st.title("🌐 終極版：雙語字幕翻譯器（Claude）")
 
-    saved_api_key = load_api_key()
-    api_key = st.text_input("Anthropic API 密鑰", value=saved_api_key, type="password")
-    if api_key and api_key != saved_api_key:
-        save_api_key(api_key)
+    api_key = st.text_input("Anthropic API 密鑰", value="", type="password")
+    
+    if api_key:
+        if validate_api_key(api_key):
+            st.success("API 密鑰驗證成功！")
+            save_api_key(api_key)
+        else:
+            st.error("無效的 API 密鑰。請檢查並重新輸入。")
+            return  # 如果 API 密鑰無效，不繼續執行後續代碼
 
     col1, col2 = st.columns(2)
     with col1:
