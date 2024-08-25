@@ -1,8 +1,6 @@
 import streamlit as st
 from openai import OpenAI
 import time
-import json
-import os
 from ai_subtitle_generator import ai_subtitle_generator
 from subtitle_time_sync import subtitle_time_sync
 from bilingual_subtitle_resizer import bilingual_subtitle_resizer
@@ -11,24 +9,11 @@ from ultra_bilingual_srt_translator import ultra_bilingual_srt_translator
 from subtitle_corrector import subtitle_corrector
 from whisper_api_tool import whisper_api_tool
 
-API_KEY_FILE = "api_key.json"
-
 def init_session_state():
     if 'api_key' not in st.session_state:
         st.session_state.api_key = ""
     if 'api_key_valid' not in st.session_state:
         st.session_state.api_key_valid = False
-
-def load_api_key():
-    if os.path.exists(API_KEY_FILE):
-        with open(API_KEY_FILE, 'r') as f:
-            data = json.load(f)
-            return data.get('api_key', '')
-    return ''
-
-def save_api_key(api_key):
-    with open(API_KEY_FILE, 'w') as f:
-        json.dump({'api_key': api_key}, f)
 
 def validate_api_key(api_key):
     client = OpenAI(api_key=api_key)
@@ -39,22 +24,16 @@ def validate_api_key(api_key):
         return False
 
 def api_key_input():
-    api_key = st.sidebar.text_input(
-        "輸入您的 OpenAI API Key",
-        value=st.session_state.api_key,
-        type="password",
-        key="api_key_input"
-    )
-    
+    api_key = st.sidebar.text_input("輸入您的 OpenAI API Key", value=st.session_state.api_key, type="password", key="api_key_input")
+
     message_placeholder = st.sidebar.empty()
-    
+
     if api_key != st.session_state.api_key:
         st.session_state.api_key = api_key
         if api_key:
             if validate_api_key(api_key):
                 message_placeholder.success("API Key 有效")
                 st.session_state.api_key_valid = True
-                save_api_key(api_key)
                 time.sleep(0.5)
                 message_placeholder.empty()
             else:
@@ -66,13 +45,6 @@ def api_key_input():
 def main():
     st.set_page_config(page_title="剪接神器", layout="wide")
     init_session_state()
-
-    # 從文件加載API Key
-    saved_api_key = load_api_key()
-    if saved_api_key and not st.session_state.api_key:
-        st.session_state.api_key = saved_api_key
-        if validate_api_key(saved_api_key):
-            st.session_state.api_key_valid = True
 
     st.sidebar.title("剪接神器")
 
@@ -108,5 +80,5 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 剪接神器. All rights reserved.")
 
-if __name__ == "__main__":
+if name == "main":
     main()
