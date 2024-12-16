@@ -1,3 +1,4 @@
 ffmpeg
 python3-dev
 build-essential
+fal-client

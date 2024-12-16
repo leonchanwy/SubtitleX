@@ -11,13 +11,19 @@ from whisper_api_tool import whisper_api_tool
 
 def init_session_state():
     if 'api_key' not in st.session_state:
-        st.session_state.api_key = ""
+        st.session_state['api_key'] = ""
     if 'api_key_valid' not in st.session_state:
-        st.session_state.api_key_valid = False
+        st.session_state['api_key_valid'] = False
+    if 'logged_in' not in st.session_state:
+        st.session_state['logged_in'] = False
+    if 'name' not in st.session_state:
+        st.session_state['name'] = None
+    if 'username' not in st.session_state:
+        st.session_state['username'] = None
 
 def validate_api_key(api_key):
-    client = OpenAI(api_key=api_key)
     try:
+        client = OpenAI(api_key=api_key)
         client.models.list()
         return True
     except Exception:
@@ -26,30 +32,22 @@ def validate_api_key(api_key):
 def api_key_input():
     api_key = st.sidebar.text_input(
         "輸入您的 OpenAI API Key",
-        value=st.session_state.api_key,
+        value=st.session_state['api_key'],
         type="password",
         key="api_key_input"
     )
     
-    if api_key != st.session_state.api_key:
-        st.session_state.api_key = api_key
+    if api_key != st.session_state['api_key']:
+        st.session_state['api_key'] = api_key
         if api_key:
             if validate_api_key(api_key):
                 st.sidebar.success("API Key 有效")
-                st.session_state.api_key_valid = True
-                st.markdown(
-                    """
-                    <script>
-                    localStorage.setItem('openai_api_key', '{}');
-                    </script>
-                    """.format(api_key),
-                    unsafe_allow_html=True
-                )
+                st.session_state['api_key_valid'] = True
             else:
                 st.sidebar.error("無效的 API Key")
-                st.session_state.api_key_valid = False
+                st.session_state['api_key_valid'] = False
         else:
-            st.session_state.api_key_valid = False
+            st.session_state['api_key_valid'] = False
 
 def main():
     st.set_page_config(page_title="剪接神器", layout="wide")
@@ -68,33 +66,33 @@ def main():
         unsafe_allow_html=True
     )
 
-    st.sidebar.title("剪接神器")
+    st.sidebar.title("導航")
 
     api_key_input()
 
-    if not st.session_state.api_key_valid:
+    if not st.session_state['api_key_valid']:
         st.warning("請在側邊欄輸入有效的 OpenAI API Key 以使用需要 API 的功能")
 
-    page = st.sidebar.radio("選擇功能",
-                            ("AI 生成字幕", "雙語字幕翻譯器", "終極版：雙語字幕翻譯器", 
-                             "字幕時間同步器", "雙語字幕大小調整器", "字幕錯字修正器", "Whisper API 功能"),
-                            captions=["把聲音轉譯成字幕", "翻譯 SRT 文件", "強化版翻譯工具", 
-                                      "同步字幕與分鏡點的時間", "調整雙語字幕大小", "改錯字", 
-                                      "使用 Whisper API 的功能"])
+    page = st.sidebar.selectbox(
+        "選擇功能",
+        ["AI 生成字幕", "字幕時間同步", "雙語字幕大小調整", 
+         "雙語字幕翻譯", "多語言字幕翻譯", "字幕錯字修正",
+         "Whisper API Tool"]
+    )
 
     if page == "AI 生成字幕":
         ai_subtitle_generator()
-    elif page == "字幕時間同步器":
+    elif page == "字幕時間同步":
         subtitle_time_sync()
-    elif page == "雙語字幕大小調整器":
+    elif page == "雙語字幕大小調整":
         bilingual_subtitle_resizer()
-    elif page == "雙語字幕翻譯器":
+    elif page == "雙語字幕翻譯":
         bilingual_srt_translator()
-    elif page == "終極版：雙語字幕翻譯器":
+    elif page == "多語言字幕翻譯":
         multi_language_subtitle_translator()
-    elif page == "字幕錯字修正器":
+    elif page == "字幕錯字修正":
         subtitle_corrector()
-    elif page == "Whisper API 功能":
+    elif page == "Whisper API Tool":
         whisper_api_tool()
 
     st.sidebar.markdown("---")
