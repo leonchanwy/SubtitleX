@@ -16,13 +16,13 @@ def init_session_state():
     if 'api_key_valid' not in st.session_state:
         st.session_state.api_key_valid = False
 
-def validate_api_key(api_key):
-    client = OpenAI(api_key=api_key)
-    try:
-        client.models.list()
-        return True
-    except Exception:
-        return False
+# def validate_api_key(api_key):
+#     client = OpenAI(api_key=api_key)
+#     try:
+#         client.models.list()
+#         return True
+#     except Exception:
+#         return False
 
 def ai_subtitle_generator():
     # Initialize session state
@@ -31,9 +31,9 @@ def ai_subtitle_generator():
 
     # API Key input in main interface
     api_key = st.text_input("OpenAI API Key", value=st.session_state.api_key, type="password")
-    if api_key != st.session_state.api_key:
-        st.session_state.api_key = api_key
-        st.session_state.api_key_valid = validate_api_key(api_key)
+    # if api_key != st.session_state.api_key:
+    #     st.session_state.api_key = api_key
+    #     st.session_state.api_key_valid = validate_api_key(api_key)
 
     language_options = {
         '中文': 'zh', '英文': 'en', '馬來語': 'ms', '日文': 'ja', '韓文': 'ko', '德語': 'de', '法語': 'fr',

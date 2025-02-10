@@ -21,13 +21,13 @@ def init_session_state():
     if 'username' not in st.session_state:
         st.session_state['username'] = None
 
-def validate_api_key(api_key):
-    try:
-        client = OpenAI(api_key=api_key)
-        client.models.list()
-        return True
-    except Exception:
-        return False
+# def validate_api_key(api_key):
+#     try:
+#         client = OpenAI(api_key=api_key)
+#         client.models.list()
+#         return True
+#     except Exception:
+#         return False
 
 # def api_key_input():
 #     api_key = st.sidebar.text_input(
