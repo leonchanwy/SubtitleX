@@ -29,25 +29,25 @@ def validate_api_key(api_key):
     except Exception:
         return False
 
-def api_key_input():
-    api_key = st.sidebar.text_input(
-        "輸入您的 OpenAI API Key",
-        value=st.session_state['api_key'],
-        type="password",
-        key="api_key_input"
-    )
+# def api_key_input():
+#     api_key = st.sidebar.text_input(
+#         "輸入您的 OpenAI API Key",
+#         value=st.session_state['api_key'],
+#         type="password",
+#         key="api_key_input"
+#     )
     
-    # if api_key != st.session_state['api_key']:
-    #     st.session_state['api_key'] = api_key
-    #     if api_key:
-    #         if validate_api_key(api_key):
-    #             st.sidebar.success("API Key 有效")
-    #             st.session_state['api_key_valid'] = True
-    #         else:
-    #             st.sidebar.error("無效的 API Key")
-    #             st.session_state['api_key_valid'] = False
-    #     else:
-    #         st.session_state['api_key_valid'] = False
+#     if api_key != st.session_state['api_key']:
+#         st.session_state['api_key'] = api_key
+#         if api_key:
+#             if validate_api_key(api_key):
+#                 st.sidebar.success("API Key 有效")
+#                 st.session_state['api_key_valid'] = True
+#             else:
+#                 st.sidebar.error("無效的 API Key")
+#                 st.session_state['api_key_valid'] = False
+#         else:
+#             st.session_state['api_key_valid'] = False
 
 def main():
     st.set_page_config(page_title="剪接神器", layout="wide")
@@ -68,10 +68,10 @@ def main():
 
     st.sidebar.title("導航")
 
-    api_key_input()
+    # api_key_input()
 
-    if not st.session_state['api_key_valid']:
-        st.warning("請在側邊欄輸入有效的 OpenAI API Key 以使用需要 API 的功能")
+    # if not st.session_state['api_key_valid']:
+    #     st.warning("請在側邊欄輸入有效的 OpenAI API Key 以使用需要 API 的功能")
 
     page = st.sidebar.selectbox(
         "選擇功能",
