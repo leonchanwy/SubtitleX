@@ -37,17 +37,17 @@ def api_key_input():
         key="api_key_input"
     )
     
-    if api_key != st.session_state['api_key']:
-        st.session_state['api_key'] = api_key
-        if api_key:
-            if validate_api_key(api_key):
-                st.sidebar.success("API Key 有效")
-                st.session_state['api_key_valid'] = True
-            else:
-                st.sidebar.error("無效的 API Key")
-                st.session_state['api_key_valid'] = False
-        else:
-            st.session_state['api_key_valid'] = False
+    # if api_key != st.session_state['api_key']:
+    #     st.session_state['api_key'] = api_key
+    #     if api_key:
+    #         if validate_api_key(api_key):
+    #             st.sidebar.success("API Key 有效")
+    #             st.session_state['api_key_valid'] = True
+    #         else:
+    #             st.sidebar.error("無效的 API Key")
+    #             st.session_state['api_key_valid'] = False
+    #     else:
+    #         st.session_state['api_key_valid'] = False
 
 def main():
     st.set_page_config(page_title="剪接神器", layout="wide")
