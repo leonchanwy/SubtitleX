@@ -10,19 +10,22 @@ import base64
 from io import BytesIO
 from openai import OpenAI
 
-# def init_session_state():
-#     if 'api_key' not in st.session_state:
-#         st.session_state.api_key = ''
-#     if 'api_key_valid' not in st.session_state:
-#         st.session_state.api_key_valid = False
+def init_session_state():
+    if 'api_key' not in st.session_state:
+        st.session_state.api_key = ''
+    if 'api_key_valid' not in st.session_state:
+        st.session_state.api_key_valid = False
 
-# def validate_api_key(api_key):
-#     client = OpenAI(api_key=api_key)
-#     try:
-#         client.models.list()
-#         return True
-#     except Exception:
-#         return False
+def validate_api_key(api_key):
+    if not api_key:  # 檢查是否為空
+        return False
+    try:
+        client = OpenAI(api_key=api_key)
+        client.models.list()  # 使用 models.list() 來驗證
+        return True
+    except Exception as e:
+        print(f"API key validation error: {str(e)}")  # 用於調試
+        return False
 
 def ai_subtitle_generator():
     # Initialize session state
@@ -31,9 +34,15 @@ def ai_subtitle_generator():
 
     # API Key input in main interface
     api_key = st.text_input("OpenAI API Key", value=st.session_state.api_key, type="password")
-    # if api_key != st.session_state.api_key:
-    #     st.session_state.api_key = api_key
-    #     st.session_state.api_key_valid = validate_api_key(api_key)
+    if api_key:  # 只在有輸入 API key 時進行驗證
+        if api_key != st.session_state.api_key:
+            st.session_state.api_key = api_key
+            is_valid = validate_api_key(api_key)
+            st.session_state.api_key_valid = is_valid
+            if not is_valid:
+                st.error("無效的 API Key，請檢查後重試。")
+            else:
+                st.success("API Key 驗證成功！")
 
     language_options = {
         '中文': 'zh', '英文': 'en', '馬來語': 'ms', '日文': 'ja', '韓文': 'ko', '德語': 'de', '法語': 'fr',
@@ -70,7 +79,7 @@ def ai_subtitle_generator():
     elif uploaded_file is not None:
         original_filename = os.path.splitext(uploaded_file.name)[0]
 
-    if uploaded_file is not None:
+    if uploaded_file is not None and st.session_state.api_key_valid:
         total_start_time = time.time()
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as temp_file:
