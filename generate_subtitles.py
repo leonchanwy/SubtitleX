@@ -5,6 +5,7 @@ import shutil
 from pydub import AudioSegment
 import requests
 import gdown
+from openai import OpenAI
 
 def download_video_from_google_drive(google_drive_video_link, output_file_name):
     gdown.download(google_drive_video_link, output_file_name, quiet=False)
@@ -29,50 +30,48 @@ def compress_audio(input_file, target_size=21):
 
     return output_file
 
-def transcribe_audio(compressed_file, srt_file, language, prompt, api_key, temperature):
-    with open(compressed_file, 'rb') as f:
-        response = requests.post(
-            'https://api.openai.com/v1/audio/transcriptions',
-            headers={
-                'Authorization': f'Bearer {api_key}'},
-            data={
-                'model': 'whisper-1',
-                'language': language,
-                'prompt': prompt,
-                'response_format': 'srt',
-                'temperature': temperature,
-            },
-            files={'file': (compressed_file, f, 'audio/mpeg')}
-        )
-        
-    if response.status_code == 200:
-        with open(srt_file, 'w', encoding='utf-8') as f:
-            f.write(response.text)
-    else:
-        print(f"Error transcribing audio: {response.text}")
-        raise Exception(f"Error transcribing audio: {response.text}")
+def transcribe_audio(audio_file, output_file, language, prompt, api_key, temperature):
+    client = OpenAI(api_key=api_key)
+    
+    try:
+        with open(audio_file, "rb") as file:
+            transcription = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=file,
+                language=language,
+                prompt=prompt,
+                response_format="srt",
+                temperature=temperature
+            )
+            
+        # 直接寫入返回的字符串
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(transcription)
+            
+    except Exception as e:
+        print(f"轉錄失敗：{str(e)}")
+        raise e
 
-def translate_audio(compressed_file, srt_file, prompt, api_key, temperature):
-    with open(compressed_file, 'rb') as f:
-        response = requests.post(
-            'https://api.openai.com/v1/audio/translations',
-            headers={
-                'Authorization': f'Bearer {api_key}'},
-            data={
-                'model': 'whisper-1',
-                'prompt': prompt,
-                'response_format': 'srt',
-                'temperature': temperature,
-            },
-            files={'file': (compressed_file, f, 'audio/mpeg')}
-        )
-        
-    if response.status_code == 200:
-        with open(srt_file, 'w', encoding='utf-8') as f:
-            f.write(response.text)
-    else:
-        print(f"Error translating audio: {response.text}")
-        raise Exception(f"Error translating audio: {response.text}")
+def translate_audio(audio_file, output_file, prompt, api_key, temperature):
+    client = OpenAI(api_key=api_key)
+    
+    try:
+        with open(audio_file, "rb") as file:
+            translation = client.audio.translations.create(
+                model="whisper-1",
+                file=file,
+                prompt=prompt,
+                response_format="srt",
+                temperature=temperature
+            )
+            
+        # 直接寫入返回的字符串
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(translation)
+            
+    except Exception as e:
+        print(f"翻譯失敗：{str(e)}")
+        raise e
         
 if __name__ == "__main__":
     google_drive_video_link = "https://drive.google.com/file/d/1pkm5_UE4HhO6UUZHdCEkZnlNtzSNLAAU/view?usp=sharing"
