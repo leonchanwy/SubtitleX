@@ -10,11 +10,11 @@ import base64
 from io import BytesIO
 from openai import OpenAI
 
-def init_session_state():
-    if 'api_key' not in st.session_state:
-        st.session_state.api_key = ''
-    if 'api_key_valid' not in st.session_state:
-        st.session_state.api_key_valid = False
+# def init_session_state():
+#     if 'api_key' not in st.session_state:
+#         st.session_state.api_key = ''
+#     if 'api_key_valid' not in st.session_state:
+#         st.session_state.api_key_valid = False
 
 # def validate_api_key(api_key):
 #     client = OpenAI(api_key=api_key)
@@ -70,7 +70,7 @@ def ai_subtitle_generator():
     elif uploaded_file is not None:
         original_filename = os.path.splitext(uploaded_file.name)[0]
 
-    if uploaded_file is not None and st.session_state.api_key_valid:
+    if uploaded_file is not None:
         total_start_time = time.time()
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as temp_file:
