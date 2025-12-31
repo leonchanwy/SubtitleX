@@ -3,9 +3,11 @@ import re
 import time
 import logging
 import json
+import concurrent.futures
 from typing import List, Tuple, Dict, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
 from openai import OpenAI, RateLimitError, APIError
+import anthropic
 
 # 自定義例外：API 配額用盡
 class QuotaExceededError(Exception):
@@ -17,28 +19,40 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # 常量
-DEFAULT_MODEL = "gpt-4o-2024-08-06"
+DEFAULT_OPENAI_MODEL = "gpt-4o-2024-08-06"
+DEFAULT_CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
 MAX_TOKENS = 4000
 TEMPERATURE = 0.1
 BATCH_SIZE = 30
 LANGUAGE_OPTIONS = ["繁體中文", "英文", "日文", "馬來語", "廣東話口語", "德文"]
+API_PROVIDERS = ["OpenAI", "Claude"]
+# 包含已知穩定模型及未來可能模型
+CLAUDE_MODELS = [
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku-20241022",
+    "claude-3-opus-20240229",
+    "claude-sonnet-4-20250514", 
+    "claude-opus-4-1-20250620"
+]
 
 def init_session_state():
-    if 'api_key' not in st.session_state:
-        st.session_state.api_key = ''
-    if 'api_key_valid' not in st.session_state:
-        st.session_state.api_key_valid = False
+    if 'openai_api_key' not in st.session_state:
+        st.session_state.openai_api_key = ''
+    if 'claude_api_key' not in st.session_state:
+        st.session_state.claude_api_key = ''
+    if 'api_provider' not in st.session_state:
+        st.session_state.api_provider = 'OpenAI'
 
 class SubtitleProcessor:
     @staticmethod
     def parse_srt(content: str) -> List[Tuple[str, str, str]]:
         content = content.replace('\r\n', '\n').strip()
-        # 更穩健的 regex：匹配 ID, 時間軸, 和內容 (直到下一個 ID 或文件結束)
-        # 使用多行模式，並允許時間軸格式有些微容錯
+        # 修復：更嚴格的 Lookahead，要求下一塊必須是 "數字 + 換行 + 時間軸"
         pattern = re.compile(
             r'(\d+)\s*\n'  # ID
             r'(\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[,.]\d{3}).*?\n'  # Timestamp
-            r'([\s\S]*?)(?=\n+\d+\s*\n|\Z)', # Content
+            r'([\s\S]*?)' # Content
+            r'(?=\n+\d+\s*\n\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\Z)', # Lookahead checking for ID AND Timestamp
             re.MULTILINE
         )
         
@@ -62,7 +76,8 @@ class SubtitleProcessor:
 
     @staticmethod
     def clean_text(content: str) -> str:
-        content = re.sub(r'</?[a-z]+>', '', content) # Remove HTML tags
+        # 修復：移除所有 HTML 標籤（包括帶屬性的）
+        content = re.sub(r'<[^>]+>', '', content) 
         content = re.sub(r'\{\\an\d\}', '', content) # Remove alignment tags
         return content
 
@@ -70,7 +85,8 @@ class SubtitleProcessor:
     def format_srt(subtitles: List[Tuple[str, str, str]], translations: List[Dict[str, str]], 
                    format_type: str, lang1: str, lang2: str = None) -> str:
         output = []
-        # Ensure we don't index out of bounds if lengths differ (though they shouldn't now)
+        
+        # 安全長度限制
         limit = min(len(subtitles), len(translations))
         
         for i in range(limit):
@@ -92,11 +108,18 @@ class SubtitleProcessor:
         return "\n".join(output).strip()
 
 class SubtitleTranslator:
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
+    def __init__(self, api_key: str, provider: str = "OpenAI"):
+        self.provider = provider
+        self.api_key = api_key
+        if provider == "OpenAI":
+            self.client = OpenAI(api_key=api_key)
+        else:  # Claude
+            self.client = anthropic.Anthropic(api_key=api_key)
         self.conversation_history = []
 
     def get_available_models(self) -> List[str]:
+        if self.provider == "Claude":
+            return CLAUDE_MODELS
         try:
             models = self.client.models.list()
             # 簡單過濾出 gpt 開頭的模型，並按名稱排序
@@ -149,125 +172,163 @@ JSON 結構必須為：
         wait=wait_exponential(multiplier=1, min=4, max=60),
         retry=retry_if_not_exception_type(QuotaExceededError)
     )
-    def _translate_batch(self, batch_subtitles: List[Tuple[str, str, str]], target_lang1: str, target_lang2: str, prompt1: str, prompt2: str, model: str) -> List[Dict[str, str]]:
+    def _translate_batch(self, batch_subtitles: List[Tuple[str, str, str]], target_lang1: str, target_lang2: str, 
+                         prompt1: str, prompt2: str, model: str, use_history: bool = True) -> List[Dict[str, str]]:
+        
         system_prompt = self._create_system_prompt(target_lang1, target_lang2, prompt1, prompt2)
-
-        self._manage_conversation_history()
-
-        # Prepare user content as a structured list for clarity in prompt
-        # Using JSON string in user prompt helps the model understand the structure
+        
         input_data = [
-            {"id": sid, "text": text} 
+            {"id": sid, "text": text}
             for sid, _, text in batch_subtitles
         ]
-        user_content = f"翻譯以下字幕 (JSON):\n{json.dumps(input_data, ensure_ascii=False, indent=2)}"
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content}
-        ]
+        user_content_raw = f"翻譯以下字幕 (JSON):\n{json.dumps(input_data, ensure_ascii=False, indent=2)}"
+        # 強調 JSON 指令
+        user_content_with_instruction = user_content_raw + "\n\n請直接輸出符合格式的 JSON，不要包含任何解釋、備註或 markdown 標籤。"
 
         try:
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=MAX_TOKENS,
-                temperature=TEMPERATURE,
-                response_format={"type": "json_object"}  # 強制 JSON 模式
-            )
-
-            response_content = response.choices[0].message.content
-            
-            # Update history
-            self.conversation_history.append({"role": "user", "content": user_content})
-            self.conversation_history.append({"role": "assistant", "content": response_content})
-
-            # Parse JSON response
-            try:
-                parsed_json = json.loads(response_content)
-                translations_list = parsed_json.get("translations", [])
+            if self.provider == "Claude":
+                # 構造消息列表
+                claude_messages = []
+                if use_history:
+                    self._manage_conversation_history()
+                    claude_messages.extend(self.conversation_history)
                 
-                # Create a map for easy lookup by ID
-                trans_map = {str(item.get("id")): item for item in translations_list}
+                claude_messages.append({"role": "user", "content": user_content_with_instruction})
+                response_content = self._call_claude_api(system_prompt, claude_messages, model)
+            else:
+                # OpenAI 構造
+                openai_messages = [{"role": "system", "content": system_prompt}]
+                if use_history:
+                    self._manage_conversation_history()
+                    openai_messages.extend(self.conversation_history)
                 
-                final_results = []
-                for sid, _, original_text in batch_subtitles:
-                    item = trans_map.get(str(sid))
-                    if item:
-                        final_results.append({
-                            'original': item.get('original', original_text),
-                            target_lang1: item.get(target_lang1, '[翻譯缺失]'),
-                            target_lang2: item.get(target_lang2, '[Translation missing]')
-                        })
-                    else:
-                        logger.warning(f"ID {sid} 的翻譯在回應中遺失")
-                        final_results.append({
-                            'original': original_text,
-                            target_lang1: '[翻譯失敗]',
-                            target_lang2: '[Translation failed]'
-                        })
-                
-                return final_results
+                openai_messages.append({"role": "user", "content": user_content_with_instruction})
+                response_content = self._call_openai_api(openai_messages, model)
 
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON 解析失敗: {e}, 內容: {response_content[:100]}...")
-                raise ValueError("Model failed to return valid JSON")
+            # 更新歷史 (僅在啟用歷史且成功時)
+            if use_history:
+                self.conversation_history.append({"role": "user", "content": user_content_raw})
+                self.conversation_history.append({"role": "assistant", "content": response_content})
 
-        except (RateLimitError, APIError) as e:
+            return self._parse_translation_response(response_content, batch_subtitles, target_lang1, target_lang2)
+
+        except (RateLimitError, APIError, anthropic.RateLimitError, anthropic.APIError, Exception) as e:
             if self._check_quota_error(e):
-                logger.error(f"❌ API 配額已用盡！錯誤：{str(e)}")
-                raise QuotaExceededError(
-                    "OpenAI API 配額已用盡！請檢查您的帳戶餘額和計費詳情。"
-                ) from e
+                logger.error(f"❌ API 配額已用盡！")
+                raise QuotaExceededError("API 配額已用盡！") from e
             logger.error(f"API 錯誤：{str(e)}")
             raise
+
+    def _call_openai_api(self, messages: List[Dict], model: str) -> str:
+        """調用 OpenAI API"""
+        response = self.client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=MAX_TOKENS,
+            temperature=TEMPERATURE,
+            response_format={"type": "json_object"}
+        )
+        return response.choices[0].message.content
+
+    def _call_claude_api(self, system_prompt: str, messages: List[Dict], model: str) -> str:
+        """調用 Claude API"""
+        response = self.client.messages.create(
+            model=model,
+            max_tokens=MAX_TOKENS,
+            system=system_prompt,
+            messages=messages
+        )
+        return response.content[0].text
+
+    def _parse_translation_response(self, response_content: str, batch_subtitles: List[Tuple[str, str, str]],
+                                     target_lang1: str, target_lang2: str) -> List[Dict[str, str]]:
+        """解析翻譯回應"""
+        try:
+            # 增強 JSON 提取
+            json_match = re.search(r'\{[\s\S]*\}', response_content)
+            if json_match:
+                response_content = json_match.group()
+
+            parsed_json = json.loads(response_content)
+            translations_list = parsed_json.get("translations", [])
+            trans_map = {str(item.get("id")): item for item in translations_list}
+
+            final_results = []
+            for sid, _, original_text in batch_subtitles:
+                item = trans_map.get(str(sid))
+                if item:
+                    final_results.append({
+                        'original': item.get('original', original_text),
+                        target_lang1: item.get(target_lang1, '[翻譯缺失]'),
+                        target_lang2: item.get(target_lang2, '[Translation missing]')
+                    })
+                else:
+                    final_results.append({
+                        'original': original_text,
+                        target_lang1: '[翻譯失敗]',
+                        target_lang2: '[Translation failed]'
+                    })
+            return final_results
         except Exception as e:
-            if self._check_quota_error(e):
-                logger.error(f"❌ API 配額已用盡！錯誤：{str(e)}")
-                raise QuotaExceededError(
-                    "OpenAI API 配額已用盡！請檢查您的帳戶餘額和計費詳情。"
-                ) from e
-            logger.error(f"API 錯誤：{str(e)}")
-            raise
+            logger.error(f"解析失敗: {e}")
+            raise ValueError("Model failed to return valid JSON")
 
     def translate_subtitles(self, subtitles: List[Tuple[str, str, str]],
                             target_lang1: str, target_lang2: str,
                             prompt1: str, prompt2: str,
-                            progress_callback, model: str) -> List[Dict[str, str]]:
-        translated_subtitles = []
+                            progress_callback, model: str,
+                            use_continuous_conversation: bool = True) -> List[Dict[str, str]]:
+        
+        # 重要：每次翻譯新文件前先重置對話歷史
+        self.reset_conversation()
+        
+        translated_subtitles = [None] * len(subtitles)
         total = len(subtitles)
+        batches = [(i, subtitles[i:i+BATCH_SIZE]) for i in range(0, total, BATCH_SIZE)]
+        completed_count = 0
 
-        for i in range(0, total, BATCH_SIZE):
-            batch = subtitles[i:i+BATCH_SIZE]
-            # Pass the full batch info (including IDs) to _translate_batch
-            try:
-                translations = self._translate_batch(batch, target_lang1, target_lang2, prompt1, prompt2, model)
-                translated_subtitles.extend(translations)
-            except QuotaExceededError:
-                logger.error("❌ 偵測到 API 配額用盡，立即停止翻譯！")
-                raise
-            except Exception as e:
-                logger.error(f"翻譯批次 {i//BATCH_SIZE + 1} 失敗：{str(e)}")
-                # Create placeholders for this failed batch
-                for _, _, text in batch:
-                    translated_subtitles.append({
-                        'original': text, 
-                        target_lang1: '[翻譯失敗]', 
-                        target_lang2: '[Translation failed]'
-                    })
+        if not use_continuous_conversation:
+            # 並行模式 (不使用歷史)
+            max_workers = 5 
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_batch = {
+                    executor.submit(
+                        self._translate_batch, 
+                        batch, target_lang1, target_lang2, prompt1, prompt2, model, False
+                    ): (start_idx, batch) 
+                    for start_idx, batch in batches
+                }
+                for future in concurrent.futures.as_completed(future_to_batch):
+                    start_idx, batch = future_to_batch[future]
+                    try:
+                        results = future.result()
+                        for j, res in enumerate(results):
+                            if start_idx + j < total: translated_subtitles[start_idx + j] = res
+                    except Exception:
+                        for j, (_, _, text) in enumerate(batch):
+                            if start_idx + j < total: translated_subtitles[start_idx + j] = {'original': text, target_lang1: '[失敗]', target_lang2: '[Failed]'}
+                    completed_count += len(batch)
+                    progress_callback(min(completed_count / total, 1.0))
+        else:
+            # 串行模式 (持續對話)
+            for start_idx, batch in batches:
+                try:
+                    results = self._translate_batch(batch, target_lang1, target_lang2, prompt1, prompt2, model, True)
+                    for j, res in enumerate(results):
+                        if start_idx + j < total: translated_subtitles[start_idx + j] = res
+                except Exception:
+                    for j, (_, _, text) in enumerate(batch):
+                        if start_idx + j < total: translated_subtitles[start_idx + j] = {'original': text, target_lang1: '[失敗]', target_lang2: '[Failed]'}
+                completed_count += len(batch)
+                progress_callback(min(completed_count / total, 1.0))
+                time.sleep(0.5)
 
-            progress = min((i + BATCH_SIZE) / total, 1.0)
-            progress_callback(progress)
-
-            time.sleep(1)  # 避免 API 速率限制
-
-        return translated_subtitles
+        return [t for t in translated_subtitles if t is not None]
 
     def reset_conversation(self):
         self.conversation_history = []
 
 def validate_api_key(api_key: str) -> bool:
-    """Validate if the API key is non-empty and has a reasonable format."""
     if not api_key or not isinstance(api_key, str):
         return False
     api_key = api_key.strip()
@@ -275,44 +336,60 @@ def validate_api_key(api_key: str) -> bool:
 
 def bilingual_srt_translator():
     init_session_state()
-    st.title("🌐 雙語字幕翻譯器（GPT-4o）")
+    st.title("🌐 雙語字幕翻譯器 (Enhanced)")
 
-    api_key = st.text_input("OpenAI API Key", value=st.session_state.api_key, type="password")
-    if api_key != st.session_state.api_key:
-        st.session_state.api_key = api_key
-        st.session_state.api_key_valid = validate_api_key(api_key)
-        # Reset available models when API key changes
+    api_provider = st.selectbox(
+        "選擇 API 提供商",
+        options=API_PROVIDERS,
+        index=API_PROVIDERS.index(st.session_state.api_provider),
+        help="選擇使用 OpenAI 或 Claude API"
+    )
+
+    if api_provider != st.session_state.api_provider:
+        st.session_state.api_provider = api_provider
+        if 'available_models' in st.session_state:
+            del st.session_state.available_models
+        if 'translator' in st.session_state:
+            del st.session_state.translator
+
+    # 根據 provider 使用對應的 API Key
+    api_key_state = 'openai_api_key' if api_provider == 'OpenAI' else 'claude_api_key'
+    current_key = st.session_state[api_key_state]
+
+    api_key_label = f"{api_provider} API Key"
+    api_key = st.text_input(api_key_label, value=current_key, type="password")
+    if api_key != current_key:
+        st.session_state[api_key_state] = api_key
         if 'available_models' in st.session_state:
             del st.session_state.available_models
 
-    # 初始化可用模型列表
-    if 'available_models' not in st.session_state:
-        st.session_state.available_models = [DEFAULT_MODEL]
+    api_key_valid = validate_api_key(api_key)
 
-    # 嘗試獲取模型列表（當 API Key 有效且列表尚未更新時）
-    if st.session_state.api_key_valid and len(st.session_state.available_models) == 1:
+    default_model = DEFAULT_CLAUDE_MODEL if api_provider == "Claude" else DEFAULT_OPENAI_MODEL
+
+    if 'available_models' not in st.session_state:
+        st.session_state.available_models = [default_model]
+
+    if api_key_valid and len(st.session_state.available_models) == 1:
         try:
-            temp_translator = SubtitleTranslator(st.session_state.api_key)
+            temp_translator = SubtitleTranslator(api_key, api_provider)
             fetched_models = temp_translator.get_available_models()
             if fetched_models:
                 st.session_state.available_models = fetched_models
-                # 確保默認模型在列表中
-                if DEFAULT_MODEL not in st.session_state.available_models:
-                     st.session_state.available_models.insert(0, DEFAULT_MODEL)
+                if default_model not in st.session_state.available_models:
+                    st.session_state.available_models.insert(0, default_model)
         except Exception as e:
             logger.warning(f"無法自動獲取模型列表: {e}")
 
-    # 模型選擇下拉菜單
     try:
-        default_index = st.session_state.available_models.index(DEFAULT_MODEL)
+        default_index = st.session_state.available_models.index(default_model)
     except ValueError:
         default_index = 0
-        
+
     model_name = st.selectbox(
-        "選擇模型 (Select Model)", 
-        options=st.session_state.available_models, 
-        index=default_index,
-        help="從您的 OpenAI 帳戶中獲取可用模型列表。如果無法獲取，將顯示默認模型。"
+        "選擇模型 (Select Model)",
+        options=st.session_state.available_models,
+        index=default_index
     )
 
     col1, col2 = st.columns(2)
@@ -325,7 +402,12 @@ def bilingual_srt_translator():
 
     uploaded_file = st.file_uploader("選擇 SRT 文件", type="srt")
 
-    use_continuous_conversation = st.checkbox("使用持續對話（可能提高翻譯一致性）", value=True)
+    # 改進的選項說明
+    use_continuous_conversation = st.checkbox(
+        "使用持續對話 (開啟=高品質上下文，關閉=極速並行翻譯)", 
+        value=True,
+        help="開啟：模型會記得上一段翻譯內容，術語更一致，但速度較慢。\n關閉：同時翻譯多個片段，速度極快，但前後文關聯較弱。"
+    )
     
     if st.button("重置翻譯對話歷史"):
         if 'translator' in st.session_state:
@@ -343,10 +425,15 @@ def bilingual_srt_translator():
             content = SubtitleProcessor.clean_text(content)
             subtitles = SubtitleProcessor.parse_srt(content)
 
-            # 檢查是否需要創建新的 translator（首次或 API key 變更）
-            if 'translator' not in st.session_state or st.session_state.get('translator_api_key') != api_key:
-                st.session_state.translator = SubtitleTranslator(api_key)
+            needs_new_translator = (
+                'translator' not in st.session_state or
+                st.session_state.get('translator_api_key') != api_key or
+                st.session_state.get('translator_provider') != api_provider
+            )
+            if needs_new_translator:
+                st.session_state.translator = SubtitleTranslator(api_key, api_provider)
                 st.session_state.translator_api_key = api_key
+                st.session_state.translator_provider = api_provider
 
             if not use_continuous_conversation:
                 st.session_state.translator.reset_conversation()
@@ -354,38 +441,34 @@ def bilingual_srt_translator():
             progress_bar = st.progress(0)
             status_text = st.empty()
 
-            with st.spinner(f"正在使用 {model_name} 翻譯..."):
+            mode_text = "串行上下文模式" if use_continuous_conversation else "並行極速模式"
+            with st.spinner(f"正在使用 {api_provider} {model_name} 翻譯 ({mode_text})..."):
                 start_time = time.time()
                 st.session_state.translated_subtitles = st.session_state.translator.translate_subtitles(
-                    subtitles, target_lang1, target_lang2, prompt1, prompt2, progress_bar.progress, model_name
+                    subtitles, target_lang1, target_lang2, prompt1, prompt2, 
+                    progress_bar.progress, model_name, use_continuous_conversation
                 )
                 st.session_state.original_subtitles = subtitles
-                # 儲存翻譯時使用的語言選項
                 st.session_state.translated_lang1 = target_lang1
                 st.session_state.translated_lang2 = target_lang2
                 end_time = time.time()
 
             processing_time = end_time - start_time
-            status_text.success(f"✅ 翻譯完成！總處理時間：{processing_time:.2f} 秒")
+            status_text.success(f"✅ 翻譯完成！總處理時間：{processing_time:.2f} 秒 ({mode_text})")
+            
+            # 修復：完整性檢查
+            if len(st.session_state.translated_subtitles) != len(subtitles):
+                st.warning(f"⚠️ 警告：原文有 {len(subtitles)} 句，但翻譯結果只有 {len(st.session_state.translated_subtitles)} 句。輸出可能不完整。")
 
         except QuotaExceededError as e:
-            st.error(f"""
-            ❌ **API 配額已用盡！翻譯已停止。**
-
-            {str(e)}
-
-            **解決方案：**
-            1. 登入 [OpenAI Platform](https://platform.openai.com/account/billing)
-            2. 檢查您的帳戶餘額
-            3. 添加付款方式或購買更多額度
-            """)
-            logger.error("API 配額用盡，翻譯已停止")
+            billing_url = "https://console.anthropic.com/settings/billing" if api_provider == "Claude" else "https://platform.openai.com/account/billing"
+            st.error(f"❌ **API 配額已用盡！**\n\n{str(e)}\n\n[前往計費設置]({billing_url})")
+            logger.error("API 配額用盡")
         except Exception as e:
             st.error(f"❌ 處理過程中發生錯誤：{str(e)}")
             logger.exception("翻譯過程中發生異常")
 
     if st.session_state.translated_subtitles:
-        # 使用翻譯時儲存的語言選項
         trans_lang1 = st.session_state.get('translated_lang1', target_lang1)
         trans_lang2 = st.session_state.get('translated_lang2', target_lang2)
 
@@ -423,19 +506,13 @@ def bilingual_srt_translator():
                 mime="text/plain"
             )
 
-            missing_translations = [t for t in st.session_state.translated_subtitles if any('[缺失翻譯' in v or '[翻譯失敗]' in v for v in t.values())]
+            missing_translations = [t for t in st.session_state.translated_subtitles if t and any('[缺失翻譯' in v or '[翻譯失敗]' in v for v in t.values())]
             if missing_translations:
-                st.warning(f"⚠️ 注意：有 {len(missing_translations)} 個字幕未能正確翻譯。")
-                if st.button("顯示未翻譯的字幕"):
-                    for mt in missing_translations:
-                        st.text(f"原文: {mt['original']}")
-                        st.text(f"{trans_lang1}: {mt.get(trans_lang1, '[無]')}")
-                        st.text(f"{trans_lang2}: {mt.get(trans_lang2, '[無]')}")
-                        st.text("---")
+                st.warning(f"⚠️ 注意：有 {len(missing_translations)} 個字幕未能正確翻譯。\n")
 
         except Exception as e:
             st.error(f"❌ 生成預覽或下載文件時發生錯誤：{str(e)}")
-            logger.exception("生成預覽或下載文件時發生異常")
+            logger.exception("生成預覽異常")
 
     if st.sidebar.checkbox("啟用調試模式"):
         st.sidebar.subheader("調試信息")
@@ -449,20 +526,14 @@ def bilingual_srt_translator():
 
     st.sidebar.title("📌 使用說明")
     st.sidebar.markdown("""
-    1. 輸入您的 OpenAI API 密鑰
-    2. 選擇兩種目標翻譯語言
-    3. 設定每種語言的翻譯風格（可選）
-    4. 上傳 SRT 格式的字幕文件
-    5. 選擇是否使用持續對話
-    6. 點擊「開始翻譯」按鈕
-    7. 等待翻譯完成後，選擇下載格式並下載翻譯後的字幕文件
-    """)
-
-    st.sidebar.title("ℹ️ 關於")
-    st.sidebar.info("""
-    本工具使用 Open AI 的 AI 模型進行字幕翻譯。
-    它支持多種語言組合，並允許自定義翻譯風格。
-    如有任何問題或建議，請聯繫開發團隊。
+    1. 選擇 API 提供商（OpenAI 或 Claude）
+    2. 輸入 API Key
+    3. 設定目標語言和風格
+    4. 上傳 SRT 文件
+    5. **選擇模式**：
+       - **持續對話 (勾選)**：適合需要上下文連貫的翻譯，速度較慢。
+       - **並行翻譯 (不勾選)**：適合追求速度，速度極快。
+    6. 點擊「開始翻譯」
     """)
 
 if __name__ == "__main__":
