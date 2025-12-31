@@ -10,3 +10,8 @@ python-dotenv==1.0.0
 anthropic
 pandas
 tenacity
+requests
+pyrebase4
+firebase-admin
+stripe
+groq

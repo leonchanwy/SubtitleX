@@ -190,6 +190,13 @@ def save_api_key(api_key: str):
     with open('api_key.txt', 'w') as file:
         file.write(api_key)
 
+def validate_api_key(api_key: str) -> bool:
+    """Validate if the API key is non-empty and has a reasonable format."""
+    if not api_key or not isinstance(api_key, str):
+        return False
+    api_key = api_key.strip()
+    return len(api_key) > 0
+
 def bilingual_srt_translator():
     init_session_state()
     st.title("🌐 雙語字幕翻譯器（GPT-4o）")

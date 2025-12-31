@@ -5,28 +5,40 @@ from firebase_admin import credentials, firestore
 import stripe
 import time
 import datetime
+import requests
+import os
 
 # -------------------- 配置部分 --------------------
 
-# Firebase 配置  
-firebase_config = {  
-    "apiKey": "AIzaSyDSHJhXqzUoieFVj9JAs3VVchxPST25oV4",  
-    "authDomain": "subtitlex-52615.firebaseapp.com",  
-    "projectId": "subtitlex-52615",  
-    "storageBucket": "subtitlex-52615.appspot.com",  
-    "messagingSenderId": "656186755294",  
-    "appId": "1:656186755294:web:29e06a0a6bb97eba78da4f",
-    "databaseURL": "https://subtitlex-d0142-default-rtdb.asia-southeast1.firebasedatabase.app",
-}
+# Firebase 配置
+# TODO: 取消註解並填入正確的 Firebase 配置
+# firebase_config = {
+#     "apiKey": "YOUR_API_KEY",
+#     "authDomain": "subtitlex-52615.firebaseapp.com",
+#     "projectId": "subtitlex-52615",
+#     "storageBucket": "subtitlex-52615.appspot.com",
+#     "messagingSenderId": "656186755294",
+#     "appId": "1:656186755294:web:29e06a0a6bb97eba78da4f",
+#     "databaseURL": "https://subtitlex-d0142-default-rtdb.asia-southeast1.firebasedatabase.app",
+# }
 
 # 初始化 Firebase
-firebase = pyrebase.initialize_app(firebase_config)
-auth = firebase.auth()
+# TODO: 取消註解以啟用 Firebase 功能
+# firebase = pyrebase.initialize_app(firebase_config)
+# auth = firebase.auth()
 
 # Firebase Admin 初始化
+# TODO: 設置環境變數 FIREBASE_CREDENTIALS_PATH 或將憑證文件放在專案根目錄
 if not firebase_admin._apps:
-    cred = credentials.Certificate('/Users/leonchanwy/Downloads/subtitlex-52615-firebase-adminsdk-a22p7-752605b9a4.json')
-    firebase_admin.initialize_app(cred)
+    credentials_path = os.environ.get(
+        'FIREBASE_CREDENTIALS_PATH',
+        os.path.join(os.path.dirname(__file__), 'firebase-credentials.json')
+    )
+    if os.path.exists(credentials_path):
+        cred = credentials.Certificate(credentials_path)
+        firebase_admin.initialize_app(cred)
+    else:
+        st.warning(f"Firebase 憑證文件未找到: {credentials_path}")
 
 db = firestore.client()
 
@@ -64,7 +76,7 @@ def login():
         st.markdown(f"[点击此处使用 Google 登录]({oauth_url})", unsafe_allow_html=True)
 
     # 处理重定向后的代码交换
-    code = st.experimental_get_query_params().get('code')
+    code = st.query_params.get('code')
     if code:
         # 交换代码获取访问令牌和 ID 令牌
         token_url = "https://oauth2.googleapis.com/token"
@@ -89,7 +101,7 @@ def login():
             st.success(f"登录成功！欢迎，{user_email}")
 
             # 清除 URL 参数
-            st.experimental_set_query_params()
+            st.query_params.clear()
         else:
             st.error("登录失败，无法获取令牌。")
 
@@ -185,7 +197,7 @@ def handle_payment_success():
             # 更新用户订阅状态
             update_subscription_status(True)
             # 清除 URL 参数
-            st.experimental_set_query_params()
+            st.query_params.clear()
 
 def track_usage(func):
     def wrapper(*args, **kwargs):

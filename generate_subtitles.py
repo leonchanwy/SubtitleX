@@ -3,7 +3,6 @@ import requests
 import os
 import shutil
 from pydub import AudioSegment
-import requests
 import gdown
 from openai import OpenAI
 

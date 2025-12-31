@@ -7,6 +7,19 @@ import os
 def set_openai_api_key(api_key):
     openai.api_key = api_key
 
+def init_session_state():
+    """初始化 session state"""
+    if 'api_key' not in st.session_state:
+        st.session_state.api_key = ''
+
+def save_api_key(api_key: str):
+    """儲存 API Key 到文件"""
+    try:
+        with open('api_key.txt', 'w') as file:
+            file.write(api_key)
+    except Exception as e:
+        st.error(f"保存 API Key 失敗: {e}")
+
 def transcribe_audio(audio_file, model, language, prompt, response_format, temperature, timestamp_granularities=None):
     params = {
         "model": model,
@@ -43,6 +56,7 @@ def text_to_speech(text, model, voice, response_format, speed):
     return response.content
 
 def whisper_api_tool():
+    init_session_state()
     st.title("🇯🇵 Whisper API Tool")
     api_key = st.text_input("輸入您的 OpenAI API Key", value=st.session_state.api_key, type="password")
     if api_key != st.session_state.api_key:
