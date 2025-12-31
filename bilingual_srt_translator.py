@@ -294,18 +294,28 @@ JSON 結構必須為：
             }
         }
 
+    def _is_reasoning_model(self, model: str) -> bool:
+        """檢測是否為 reasoning 模型 (o1/o3 等不支援 temperature 的模型)"""
+        model_lower = model.lower()
+        # o1, o3, o1-mini, o1-preview, o3-mini 等都是 reasoning 模型
+        return model_lower.startswith(('o1', 'o3'))
+
     def _call_openai_api(self, messages: List[Dict], model: str, client: OpenAI,
                          response_format: dict = None) -> str:
         if response_format is None:
             response_format = {"type": "json_object"}
 
+        is_reasoning = self._is_reasoning_model(model)
+
         def make_request(fmt):
             params = {
                 "model": model,
                 "messages": messages,
-                "temperature": TEMPERATURE,
                 "response_format": fmt
             }
+            # Reasoning 模型 (o1/o3) 不支援 temperature 參數
+            if not is_reasoning:
+                params["temperature"] = TEMPERATURE
             try:
                 return client.chat.completions.create(**params, max_completion_tokens=MAX_TOKENS)
             except TypeError:
