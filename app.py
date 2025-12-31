@@ -56,40 +56,27 @@ def render_sidebar():
         st.markdown("---")
 
         # API Keys Section
-        with st.expander("🔐 API Key 設定", expanded=False):
-            st.caption("設定 API Key 以使用翻譯功能")
-            
-            new_openai_key = st.text_input(
-                "OpenAI API Key",
-                value=st.session_state.openai_api_key,
-                type="password",
-                placeholder="sk-..."
-            )
-            if new_openai_key != st.session_state.openai_api_key:
-                st.session_state.openai_api_key = new_openai_key
-                st.rerun()
+        st.subheader("🔐 API Key")
 
-            new_claude_key = st.text_input(
-                "Claude API Key",
-                value=st.session_state.claude_api_key,
-                type="password",
-                placeholder="sk-ant-..."
-            )
-            if new_claude_key != st.session_state.claude_api_key:
-                st.session_state.claude_api_key = new_claude_key
-                st.rerun()
+        new_openai_key = st.text_input(
+            "OpenAI",
+            value=st.session_state.openai_api_key,
+            type="password",
+            placeholder="sk-..."
+        )
+        if new_openai_key != st.session_state.openai_api_key:
+            st.session_state.openai_api_key = new_openai_key
+            st.rerun()
 
-        # Compact status
-        status_parts = []
-        if st.session_state.openai_api_key:
-            status_parts.append("✅ OpenAI")
-        if st.session_state.claude_api_key:
-            status_parts.append("✅ Claude")
-
-        if status_parts:
-            st.caption(" · ".join(status_parts))
-        else:
-            st.caption("⚠️ 請輸入 API Key")
+        new_claude_key = st.text_input(
+            "Claude",
+            value=st.session_state.claude_api_key,
+            type="password",
+            placeholder="sk-ant-..."
+        )
+        if new_claude_key != st.session_state.claude_api_key:
+            st.session_state.claude_api_key = new_claude_key
+            st.rerun()
 
 # --- Home Dashboard ---
 def render_home():
