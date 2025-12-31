@@ -171,15 +171,20 @@ class SubtitleTranslator:
         items = content.split('\n\n')
         for item in items:
             lines = item.strip().split('\n')
-            if len(lines) == 3:
-                original = lines[0].split('：', 1)[1].strip()
-                lang1 = lines[1].split('：', 1)[1].strip()
-                lang2 = lines[2].split('：', 1)[1].strip()
-                parsed.append({
-                    'original': original,
-                    target_lang1: lang1,
-                    target_lang2: lang2
-                })
+            if len(lines) >= 3:
+                try:
+                    # 嘗試解析標準格式
+                    original = lines[0].split('：', 1)[1].strip() if '：' in lines[0] else lines[0].strip()
+                    lang1 = lines[1].split('：', 1)[1].strip() if '：' in lines[1] else lines[1].strip()
+                    lang2 = lines[2].split('：', 1)[1].strip() if '：' in lines[2] else lines[2].strip()
+                    parsed.append({
+                        'original': original,
+                        target_lang1: lang1,
+                        target_lang2: lang2
+                    })
+                except (IndexError, ValueError) as e:
+                    logger.warning(f"解析翻譯結果時出錯：{e}，原始內容：{item[:100]}")
+                    continue
         return parsed
 
     def translate_subtitles(self, subtitles: List[Tuple[str, str, str]],
@@ -217,17 +222,6 @@ class SubtitleTranslator:
 
     def reset_conversation(self):
         self.conversation_history = []
-
-def load_api_key() -> Optional[str]:
-    try:
-        with open('api_key.txt', 'r') as file:
-            return file.read().strip()
-    except FileNotFoundError:
-        return None
-
-def save_api_key(api_key: str):
-    with open('api_key.txt', 'w') as file:
-        file.write(api_key)
 
 def validate_api_key(api_key: str) -> bool:
     """Validate if the API key is non-empty and has a reasonable format."""
@@ -273,8 +267,10 @@ def bilingual_srt_translator():
             content = SubtitleProcessor.clean_text(content)
             subtitles = SubtitleProcessor.parse_srt(content)
 
-            if 'translator' not in st.session_state:
+            # 檢查是否需要創建新的 translator（首次或 API key 變更）
+            if 'translator' not in st.session_state or st.session_state.get('translator_api_key') != api_key:
                 st.session_state.translator = SubtitleTranslator(api_key)
+                st.session_state.translator_api_key = api_key
 
             if not use_continuous_conversation:
                 st.session_state.translator.reset_conversation()
@@ -288,6 +284,9 @@ def bilingual_srt_translator():
                     subtitles, target_lang1, target_lang2, prompt1, prompt2, progress_bar.progress
                 )
                 st.session_state.original_subtitles = subtitles
+                # 儲存翻譯時使用的語言選項
+                st.session_state.translated_lang1 = target_lang1
+                st.session_state.translated_lang2 = target_lang2
                 end_time = time.time()
 
             processing_time = end_time - start_time
@@ -310,31 +309,35 @@ def bilingual_srt_translator():
             logger.exception("翻譯過程中發生異常")
 
     if st.session_state.translated_subtitles:
+        # 使用翻譯時儲存的語言選項
+        trans_lang1 = st.session_state.get('translated_lang1', target_lang1)
+        trans_lang2 = st.session_state.get('translated_lang2', target_lang2)
+
         st.subheader("翻譯結果")
         download_option = st.selectbox(
             "選擇下載格式",
-            [f"原文 + {target_lang1}", f"原文 + {target_lang2}", f"{target_lang1} + {target_lang2}", f"僅 {target_lang1}", f"僅 {target_lang2}"]
+            [f"原文 + {trans_lang1}", f"原文 + {trans_lang2}", f"{trans_lang1} + {trans_lang2}", f"僅 {trans_lang1}", f"僅 {trans_lang2}"]
         )
 
         preview_subtitles = st.session_state.original_subtitles[:5]
         preview_translations = st.session_state.translated_subtitles[:5]
-        
+
         try:
             if "原文" in download_option:
-                lang = target_lang1 if target_lang1 in download_option else target_lang2
+                lang = trans_lang1 if trans_lang1 in download_option else trans_lang2
                 preview_srt = SubtitleProcessor.format_srt(preview_subtitles, preview_translations, "bilingual", lang)
                 full_srt = SubtitleProcessor.format_srt(st.session_state.original_subtitles, st.session_state.translated_subtitles, "bilingual", lang)
                 file_name = f"原文_{lang}.srt"
             elif "+" in download_option:
-                preview_srt = SubtitleProcessor.format_srt(preview_subtitles, preview_translations, "dual_lang", target_lang1, target_lang2)
-                full_srt = SubtitleProcessor.format_srt(st.session_state.original_subtitles, st.session_state.translated_subtitles, "dual_lang", target_lang1, target_lang2)
-                file_name = f"{target_lang1}_{target_lang2}.srt"
+                preview_srt = SubtitleProcessor.format_srt(preview_subtitles, preview_translations, "dual_lang", trans_lang1, trans_lang2)
+                full_srt = SubtitleProcessor.format_srt(st.session_state.original_subtitles, st.session_state.translated_subtitles, "dual_lang", trans_lang1, trans_lang2)
+                file_name = f"{trans_lang1}_{trans_lang2}.srt"
             else:
-                lang = target_lang1 if target_lang1 in download_option else target_lang2
+                lang = trans_lang1 if trans_lang1 in download_option else trans_lang2
                 preview_srt = SubtitleProcessor.format_srt(preview_subtitles, preview_translations, "single", lang)
                 full_srt = SubtitleProcessor.format_srt(st.session_state.original_subtitles, st.session_state.translated_subtitles, "single", lang)
                 file_name = f"{lang}.srt"
-            
+
             st.text_area("翻譯預覽", value=preview_srt + "\n...", height=300)
 
             st.download_button(
@@ -350,8 +353,8 @@ def bilingual_srt_translator():
                 if st.button("顯示未翻譯的字幕"):
                     for mt in missing_translations:
                         st.text(f"原文: {mt['original']}")
-                        st.text(f"{target_lang1}: {mt[target_lang1]}")
-                        st.text(f"{target_lang2}: {mt[target_lang2]}")
+                        st.text(f"{trans_lang1}: {mt.get(trans_lang1, '[無]')}")
+                        st.text(f"{trans_lang2}: {mt.get(trans_lang2, '[無]')}")
                         st.text("---")
 
         except Exception as e:
@@ -370,7 +373,7 @@ def bilingual_srt_translator():
 
     st.sidebar.title("📌 使用說明")
     st.sidebar.markdown("""
-    1. 輸入您的 Open AI API 密鑰（將自動保存）
+    1. 輸入您的 OpenAI API 密鑰
     2. 選擇兩種目標翻譯語言
     3. 設定每種語言的翻譯風格（可選）
     4. 上傳 SRT 格式的字幕文件
