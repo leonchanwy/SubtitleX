@@ -24,8 +24,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # 常量
-DEFAULT_OPENAI_MODEL = "gpt-4o-2024-08-06"
-DEFAULT_CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
+DEFAULT_OPENAI_MODEL = "gpt-4.1-2025-04-14"
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514"
 MAX_TOKENS = 4000
 TEMPERATURE = 0.1
 BATCH_SIZE = 30
@@ -39,11 +39,11 @@ MISSING_MARKER_ZH = "[翻譯缺失]"
 MISSING_MARKER_EN = "[Translation missing]"
 # 包含已知穩定模型及未來可能模型
 CLAUDE_MODELS = [
+    "claude-sonnet-4-20250514",
+    "claude-opus-4-20250514",
+    "claude-3-7-sonnet-20250219",
     "claude-3-5-sonnet-20241022",
     "claude-3-5-haiku-20241022",
-    "claude-3-opus-20240229",
-    "claude-sonnet-4-20250514", 
-    "claude-opus-4-1-20250620"
 ]
 
 def init_session_state():
@@ -159,10 +159,13 @@ class SubtitleTranslator:
             return CLAUDE_MODELS
         try:
             models = client.models.list()
-            # 簡單過濾出 gpt 開頭的模型，並按名稱排序
-            gpt_models = [m.id for m in models.data if m.id.startswith('gpt')]
-            gpt_models.sort(reverse=True)
-            return gpt_models
+            # 過濾出 Chat Completions 可用的模型 (gpt-*, o*, chatgpt-*)
+            chat_models = [
+                m.id for m in models.data
+                if m.id.startswith(('gpt-', 'o1', 'o3', 'o4', 'chatgpt-'))
+            ]
+            chat_models.sort(reverse=True)
+            return chat_models
         except Exception as e:
             logger.error(f"無法獲取模型列表: {e}")
             return []
