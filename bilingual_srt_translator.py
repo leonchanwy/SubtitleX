@@ -298,19 +298,25 @@ JSON 結構必須為：
             }
         }
 
+    def _is_reasoning_model(self, model: str) -> bool:
+        """檢測是否為推理模型 (支援 reasoning_effort 參數的模型)"""
+        m = (model or "").lower()
+        # gpt-5 系列和 o 系列都是推理模型
+        return m.startswith(('gpt-5', 'o1', 'o3'))
+
     def _supports_sampling_params(self, model: str, reasoning_effort: str = None) -> bool:
         """檢查模型配置是否支援 temperature/top_p 等參數"""
         m = (model or "").lower()
-        
+
         # 1. 舊版推理模型 (o1-preview, o1-mini 等) 永遠不支援 temperature
         if m.startswith(('o1-preview', 'o1-mini', 'o3-mini')):
             return False
-            
+
         # 2. 如果設定了 reasoning_effort
         if reasoning_effort:
             # 只有 'none' 模式下才支援 temperature
             return reasoning_effort == 'none'
-            
+
         # 3. 未設定 reasoning_effort (使用預設值)
         # 根據使用者文件：
         # gpt-5.1 預設 none -> 支援 temperature
@@ -318,7 +324,7 @@ JSON 結構必須為：
         # o1 / o3 預設 medium -> 不支援 temperature
         if m.startswith(('gpt-5.2', 'gpt-5-pro', 'o1', 'o3')):
             return False
-            
+
         # 其他模型預設支援
         return True
 
@@ -328,6 +334,8 @@ JSON 結構必須為：
         if response_format is None:
             response_format = {"type": "json_object"}
 
+        is_reasoning = self._is_reasoning_model(model)
+
         def make_request(fmt):
             params = {
                 "model": model,
@@ -335,12 +343,12 @@ JSON 結構必須為：
                 "response_format": fmt
             }
 
-            # 加入 reasoning_effort 參數
-            if reasoning_effort:
+            # 只有推理模型才支援 reasoning_effort 參數
+            if is_reasoning and reasoning_effort:
                 params["reasoning_effort"] = reasoning_effort
 
             # 決定是否加入 temperature
-            if self._supports_sampling_params(model, reasoning_effort):
+            if self._supports_sampling_params(model, reasoning_effort if is_reasoning else None):
                 params["temperature"] = temperature
 
             try:
@@ -610,14 +618,15 @@ def bilingual_srt_translator():
             help="控制輸出的隨機性。較低值 (0.1-0.3) 產生更一致、確定的翻譯；較高值 (0.7-1.0) 產生更有創意但可能不穩定的結果。推薦字幕翻譯使用 0.1-0.3。"
         )
 
-        # Reasoning Effort 設定 (僅 OpenAI)
+        # Reasoning Effort 設定 (僅 OpenAI 推理模型：gpt-5*, o1*, o3*)
         reasoning_effort = None
-        if api_provider == "OpenAI":
+        is_reasoning_model = model_name.lower().startswith(('gpt-5', 'o1', 'o3'))
+        if api_provider == "OpenAI" and is_reasoning_model:
             reasoning_effort = st.selectbox(
                 "Reasoning Effort",
                 options=REASONING_EFFORT_OPTIONS,
                 index=REASONING_EFFORT_OPTIONS.index("none"),
-                help="控制推理模型 (o1/o3/gpt-5.x) 的思考深度。設為 'none' 時使用上方 Temperature 設定；設為 low/medium/high 時 Temperature 將被忽略。一般翻譯任務建議使用 'none'。"
+                help="控制推理模型的思考深度。設為 'none' 時使用上方 Temperature 設定；設為 low/medium/high 時 Temperature 將被忽略。一般翻譯任務建議使用 'none'。"
             )
 
     if uploaded_file and st.button("Start Translation", type="primary"):
