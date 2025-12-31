@@ -4,7 +4,6 @@ from ai_subtitle_generator import ai_subtitle_generator
 from subtitle_time_sync import subtitle_time_sync
 from bilingual_subtitle_resizer import bilingual_subtitle_resizer
 from bilingual_srt_translator import bilingual_srt_translator
-from multi_language_subtitle_translator import multi_language_subtitle_translator
 from subtitle_corrector import subtitle_corrector
 from whisper_api_tool import whisper_api_tool
 
@@ -30,7 +29,6 @@ def render_sidebar():
             "🏠 Home": "Home",
             "🚀 AI 字幕生成": "AI 生成字幕",
             "🌐 雙語翻譯": "雙語字幕翻譯",
-            "🌍 多語言翻譯": "多語言字幕翻譯",
             "⏱️ 時間軸同步": "字幕時間同步",
             "📝 錯字修正": "字幕錯字修正",
             "📏 字幕大小調整": "雙語字幕大小調整",
@@ -118,10 +116,6 @@ def render_home():
             st.rerun()
 
     with col3:
-        if ui_utils.render_card("Multi-lang Translator", "Batch translate to multiple languages.", "🌍", "Launch", "btn_multi_trans"):
-            st.session_state.current_page = "多語言字幕翻譯"
-            st.rerun()
-            
         if ui_utils.render_card("Subtitle Resizer", "Adjust font sizes for bilingual display.", "📏", "Launch", "btn_resize"):
             st.session_state.current_page = "雙語字幕大小調整"
             st.rerun()
@@ -149,8 +143,6 @@ def main():
         bilingual_subtitle_resizer()
     elif page == "雙語字幕翻譯":
         bilingual_srt_translator()
-    elif page == "多語言字幕翻譯":
-        multi_language_subtitle_translator()
     elif page == "字幕錯字修正":
         subtitle_corrector()
     elif page == "Whisper API Tool":
