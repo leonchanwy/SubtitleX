@@ -329,29 +329,37 @@ JSON 結構必須為：
 
     def _call_openai_api(self, messages: List[Dict], model: str, client: OpenAI,
                          response_format: dict = None) -> str:
-        """調用 OpenAI API"""
+        """調用 OpenAI API（支援 json_schema 降級到 json_object）"""
         if response_format is None:
             response_format = {"type": "json_object"}
 
-        common_params = {
-            "model": model,
-            "messages": messages,
-            "temperature": TEMPERATURE,
-            "response_format": response_format
-        }
+        def make_request(fmt):
+            params = {
+                "model": model,
+                "messages": messages,
+                "temperature": TEMPERATURE,
+                "response_format": fmt
+            }
+            try:
+                return client.chat.completions.create(**params, max_completion_tokens=MAX_TOKENS)
+            except TypeError:
+                # Fallback for older SDKs
+                return client.chat.completions.create(**params, max_tokens=MAX_TOKENS)
 
         try:
-            response = client.chat.completions.create(
-                **common_params,
-                max_completion_tokens=MAX_TOKENS
-            )
-        except TypeError:
-            # Fallback for older SDKs or models not supporting the new param
-            logger.warning("max_completion_tokens not supported, falling back to max_tokens")
-            response = client.chat.completions.create(
-                **common_params,
-                max_tokens=MAX_TOKENS
-            )
+            response = make_request(response_format)
+        except Exception as e:
+            error_str = str(e).lower()
+            # 若 json_schema 不支援，降級為 json_object
+            if response_format.get("type") == "json_schema" and (
+                "response_format" in error_str or
+                "json_schema" in error_str or
+                "not supported" in error_str
+            ):
+                logger.warning(f"模型 {model} 不支援 json_schema，降級為 json_object")
+                response = make_request({"type": "json_object"})
+            else:
+                raise
 
         return response.choices[0].message.content
 
