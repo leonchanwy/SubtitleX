@@ -589,7 +589,12 @@ def bilingual_srt_translator():
         available_models = [DEFAULT_CLAUDE_MODEL] if api_provider == "Claude" else [DEFAULT_OPENAI_MODEL]
 
     with col_model:
-        model_name = st.selectbox("Model", options=available_models)
+        # 計算預設模型的 index
+        default_model = DEFAULT_CLAUDE_MODEL if api_provider == "Claude" else DEFAULT_OPENAI_MODEL
+        default_index = 0
+        if default_model in available_models:
+            default_index = available_models.index(default_model)
+        model_name = st.selectbox("Model", options=available_models, index=default_index)
 
     # Language Settings
     st.subheader("Language Settings")
