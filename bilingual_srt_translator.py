@@ -241,9 +241,11 @@ JSON 結構必須為：
                 if use_history:
                     self._manage_conversation_history(max_messages=2)
                     openai_messages.extend(self.conversation_history)
-                
+
                 openai_messages.append({"role": "user", "content": user_content_with_instruction})
-                response_content = self._call_openai_api(openai_messages, model, client=local_client)
+                # 使用 Structured Outputs (json_schema) 確保輸出格式
+                schema = self._build_translation_schema(target_lang1, target_lang2)
+                response_content = self._call_openai_api(openai_messages, model, client=local_client, response_format=schema)
 
             # 更新歷史 (僅在啟用歷史且成功時，串行模式下)
             if use_history:
@@ -262,16 +264,50 @@ JSON 結構必須為：
             logger.error(f"API 錯誤：{str(e)}")
             raise
 
-    def _call_openai_api(self, messages: List[Dict], model: str, client: OpenAI) -> str:
+    def _build_translation_schema(self, target_lang1: str, target_lang2: str) -> dict:
+        """建構 OpenAI Structured Outputs 的 JSON Schema"""
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "translation_response",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "translations": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "original": {"type": "string"},
+                                    target_lang1: {"type": "string"},
+                                    target_lang2: {"type": "string"}
+                                },
+                                "required": ["id", "original", target_lang1, target_lang2],
+                                "additionalProperties": False
+                            }
+                        }
+                    },
+                    "required": ["translations"],
+                    "additionalProperties": False
+                }
+            }
+        }
+
+    def _call_openai_api(self, messages: List[Dict], model: str, client: OpenAI,
+                         response_format: dict = None) -> str:
         """調用 OpenAI API"""
-        # 嘗試使用 max_completion_tokens (新參數)，若失敗則 fallback 到 max_tokens
+        if response_format is None:
+            response_format = {"type": "json_object"}
+
         common_params = {
             "model": model,
             "messages": messages,
             "temperature": TEMPERATURE,
-            "response_format": {"type": "json_object"}
+            "response_format": response_format
         }
-        
+
         try:
             response = client.chat.completions.create(
                 **common_params,
@@ -284,7 +320,7 @@ JSON 結構必須為：
                 **common_params,
                 max_tokens=MAX_TOKENS
             )
-            
+
         return response.choices[0].message.content
 
     def _call_claude_api(self, system_prompt: str, messages: List[Dict], model: str, client: anthropic.Anthropic) -> str:
