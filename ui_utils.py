@@ -28,12 +28,15 @@ def setup_page(title: str, icon: str = "🎬"):
             margin-bottom: 1rem;
             transition: transform 0.2s;
             border: 1px solid rgba(128, 128, 128, 0.2);
+            height: 100%;
         }
         .card:hover {
             transform: translateY(-5px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
         .card h3 {
             margin-top: 0;
+            font-size: 1.2rem;
         }
         .stButton>button {
             width: 100%;
@@ -43,6 +46,23 @@ def setup_page(title: str, icon: str = "🎬"):
         .stTextInput>div>div>input {
             border-radius: 5px;
         }
+        
+        /* Sidebar Styling */
+        section[data-testid="stSidebar"] .stRadio label {
+            padding: 10px 10px;
+            border-radius: 5px;
+            margin-bottom: 2px;
+            transition: background-color 0.2s;
+        }
+        section[data-testid="stSidebar"] .stRadio label:hover {
+            background-color: rgba(150, 150, 150, 0.1);
+        }
+        
+        /* Hide radio button circle if possible - this is a bit hacky and version dependent */
+        /* section[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label > div:first-child {
+            display: none;
+        } */
+        
         </style>
     """, unsafe_allow_html=True)
 

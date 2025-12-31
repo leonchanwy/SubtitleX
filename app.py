@@ -23,70 +23,75 @@ def init_session_state():
 # --- Sidebar Logic ---
 def render_sidebar():
     with st.sidebar:
-        st.image("https://img.icons8.com/clouds/100/000000/video-editing.png", width=80)
-        st.title("SubtitleX Tool")
-        
-        # Navigation
-        st.subheader("📍 Navigation")
-        
+        st.title("🎬 SubtitleX")
+
+        # Navigation with radio buttons
         pages = {
             "🏠 Home": "Home",
-            "🚀 AI Subtitle Generator": "AI 生成字幕",
-            "🌐 Bilingual Translator": "雙語字幕翻譯",
-            "🌍 Multi-language Translator": "多語言字幕翻譯",
-            "⏱️ Time Sync": "字幕時間同步",
-            "📝 Spell Corrector": "字幕錯字修正",
-            "📏 Subtitle Resizer": "雙語字幕大小調整",
-            "🎙️ Whisper Tool": "Whisper API Tool"
+            "🚀 AI 字幕生成": "AI 生成字幕",
+            "🌐 雙語翻譯": "雙語字幕翻譯",
+            "🌍 多語言翻譯": "多語言字幕翻譯",
+            "⏱️ 時間軸同步": "字幕時間同步",
+            "📝 錯字修正": "字幕錯字修正",
+            "📏 字幕大小調整": "雙語字幕大小調整",
+            "🎙️ Whisper 測試工具": "Whisper API Tool"
         }
-        
-        # Update session state when selectbox changes
-        selected_label = st.selectbox(
-            "Go to:",
+
+        # Get current index
+        current_index = 0
+        page_values = list(pages.values())
+        if st.session_state.current_page in page_values:
+            current_index = page_values.index(st.session_state.current_page)
+
+        selected_label = st.radio(
+            "功能選單",
             options=list(pages.keys()),
-            index=list(pages.values()).index(st.session_state.current_page) if st.session_state.current_page in pages.values() else 0,
-            key="nav_selector"
+            index=current_index,
+            label_visibility="collapsed"
         )
-        
+
         # Sync selection to current_page
-        if st.session_state.nav_selector:
+        if pages[selected_label] != st.session_state.current_page:
             st.session_state.current_page = pages[selected_label]
+            st.rerun()
 
         st.markdown("---")
-        
-        # Global Settings (API Keys)
-        with st.expander("⚙️ Global Settings", expanded=False):
-            st.markdown("### API Keys")
+
+        # API Keys Section
+        with st.expander("🔐 API Key 設定", expanded=False):
+            st.caption("設定 API Key 以使用翻譯功能")
             
-            # OpenAI Key
             new_openai_key = st.text_input(
                 "OpenAI API Key",
                 value=st.session_state.openai_api_key,
                 type="password",
-                help="Required for AI Subtitles and OpenAI translation."
+                placeholder="sk-..."
             )
             if new_openai_key != st.session_state.openai_api_key:
                 st.session_state.openai_api_key = new_openai_key
                 st.rerun()
 
-            # Claude Key
             new_claude_key = st.text_input(
-                "Anthropic (Claude) API Key",
+                "Claude API Key",
                 value=st.session_state.claude_api_key,
                 type="password",
-                help="Required for Claude translation."
+                placeholder="sk-ant-..."
             )
             if new_claude_key != st.session_state.claude_api_key:
                 st.session_state.claude_api_key = new_claude_key
                 st.rerun()
 
-        # Status Indicators
-        st.markdown("### System Status")
-        ui_utils.render_api_key_status("OpenAI", bool(st.session_state.openai_api_key))
-        ui_utils.render_api_key_status("Claude", bool(st.session_state.claude_api_key))
-        
-        st.markdown("---")
-        st.info("© 2025 SubtitleX. All rights reserved.")
+        # Compact status
+        status_parts = []
+        if st.session_state.openai_api_key:
+            status_parts.append("✅ OpenAI")
+        if st.session_state.claude_api_key:
+            status_parts.append("✅ Claude")
+
+        if status_parts:
+            st.caption(" · ".join(status_parts))
+        else:
+            st.caption("⚠️ 請輸入 API Key")
 
 # --- Home Dashboard ---
 def render_home():
