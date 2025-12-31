@@ -86,13 +86,16 @@ class SubtitleProcessor:
                    format_type: str, lang1: str, lang2: str = None) -> str:
         output = []
         
-        # 安全長度限制
-        limit = min(len(subtitles), len(translations))
+        # 安全長度限制 (以字幕數量為準，不足補空)
+        # 不使用 min(len(subtitles), len(translations)) 以避免截斷
         
-        for i in range(limit):
-            number, timestamp, original_text = subtitles[i]
-            translation = translations[i]
-            
+        for i, (number, timestamp, original_text) in enumerate(subtitles):
+            # 安全獲取翻譯，若無則提供錯誤占位
+            if i < len(translations) and translations[i] is not None:
+                translation = translations[i]
+            else:
+                translation = {'original': original_text, lang1: '[翻譯缺失]', lang2: '[Missing]'}
+
             output.append(f"{number}\n{timestamp}")
             if format_type == "bilingual":
                 original = translation.get('original', original_text)
@@ -111,17 +114,26 @@ class SubtitleTranslator:
     def __init__(self, api_key: str, provider: str = "OpenAI"):
         self.provider = provider
         self.api_key = api_key
-        if provider == "OpenAI":
-            self.client = OpenAI(api_key=api_key)
-        else:  # Claude
-            self.client = anthropic.Anthropic(api_key=api_key)
+        # 初始化時不強制建立 client，改在呼叫時處理或使用 _get_client
+        self._client = None
         self.conversation_history = []
 
+    def _get_client(self):
+        """獲取或建立 Client 實例 (非線程安全，僅供單線程或主線程使用)"""
+        if self._client:
+            return self._client
+        if self.provider == "OpenAI":
+            self._client = OpenAI(api_key=self.api_key)
+        else:
+            self._client = anthropic.Anthropic(api_key=self.api_key)
+        return self._client
+
     def get_available_models(self) -> List[str]:
+        client = self._get_client()
         if self.provider == "Claude":
             return CLAUDE_MODELS
         try:
-            models = self.client.models.list()
+            models = client.models.list()
             # 簡單過濾出 gpt 開頭的模型，並按名稱排序
             gpt_models = [m.id for m in models.data if m.id.startswith('gpt')]
             gpt_models.sort(reverse=True)
@@ -154,7 +166,11 @@ JSON 結構必須為：
 5. 確保輸出的 "id" 與輸入的字幕編號完全對應。
 """
 
-    def _manage_conversation_history(self, max_messages=10):
+    def _manage_conversation_history(self, max_messages=2):
+        """
+        管理對話歷史。
+        改為預設保留較少的對話(2則：一問一答)，避免 Context Window 爆炸。
+        """
         if len(self.conversation_history) > max_messages:
             self.conversation_history = self.conversation_history[-max_messages:]
 
@@ -175,6 +191,12 @@ JSON 結構必須為：
     def _translate_batch(self, batch_subtitles: List[Tuple[str, str, str]], target_lang1: str, target_lang2: str, 
                          prompt1: str, prompt2: str, model: str, use_history: bool = True) -> List[Dict[str, str]]:
         
+        # 建立局部 client 以確保線程安全 (並行模式下)
+        if self.provider == "OpenAI":
+            local_client = OpenAI(api_key=self.api_key)
+        else:
+            local_client = anthropic.Anthropic(api_key=self.api_key)
+
         system_prompt = self._create_system_prompt(target_lang1, target_lang2, prompt1, prompt2)
         
         input_data = [
@@ -190,22 +212,24 @@ JSON 結構必須為：
                 # 構造消息列表
                 claude_messages = []
                 if use_history:
-                    self._manage_conversation_history()
+                    # 注意：在多線程環境下修改 self.conversation_history 會有競爭條件
+                    # 但此處 use_history=False 用於並行模式，use_history=True 用於串行模式，所以暫時安全
+                    self._manage_conversation_history(max_messages=2)
                     claude_messages.extend(self.conversation_history)
                 
                 claude_messages.append({"role": "user", "content": user_content_with_instruction})
-                response_content = self._call_claude_api(system_prompt, claude_messages, model)
+                response_content = self._call_claude_api(system_prompt, claude_messages, model, client=local_client)
             else:
                 # OpenAI 構造
                 openai_messages = [{"role": "system", "content": system_prompt}]
                 if use_history:
-                    self._manage_conversation_history()
+                    self._manage_conversation_history(max_messages=2)
                     openai_messages.extend(self.conversation_history)
                 
                 openai_messages.append({"role": "user", "content": user_content_with_instruction})
-                response_content = self._call_openai_api(openai_messages, model)
+                response_content = self._call_openai_api(openai_messages, model, client=local_client)
 
-            # 更新歷史 (僅在啟用歷史且成功時)
+            # 更新歷史 (僅在啟用歷史且成功時，串行模式下)
             if use_history:
                 self.conversation_history.append({"role": "user", "content": user_content_raw})
                 self.conversation_history.append({"role": "assistant", "content": response_content})
@@ -219,37 +243,67 @@ JSON 結構必須為：
             logger.error(f"API 錯誤：{str(e)}")
             raise
 
-    def _call_openai_api(self, messages: List[Dict], model: str) -> str:
+    def _call_openai_api(self, messages: List[Dict], model: str, client: OpenAI) -> str:
         """調用 OpenAI API"""
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=MAX_TOKENS,
-            temperature=TEMPERATURE,
-            response_format={"type": "json_object"}
-        )
+        # 嘗試使用 max_completion_tokens (新參數)，若失敗則 fallback 到 max_tokens
+        common_params = {
+            "model": model,
+            "messages": messages,
+            "temperature": TEMPERATURE,
+            "response_format": {"type": "json_object"}
+        }
+        
+        try:
+            response = client.chat.completions.create(
+                **common_params,
+                max_completion_tokens=MAX_TOKENS
+            )
+        except TypeError:
+            # Fallback for older SDKs or models not supporting the new param
+            logger.warning("max_completion_tokens not supported, falling back to max_tokens")
+            response = client.chat.completions.create(
+                **common_params,
+                max_tokens=MAX_TOKENS
+            )
+            
         return response.choices[0].message.content
 
-    def _call_claude_api(self, system_prompt: str, messages: List[Dict], model: str) -> str:
+    def _call_claude_api(self, system_prompt: str, messages: List[Dict], model: str, client: anthropic.Anthropic) -> str:
         """調用 Claude API"""
-        response = self.client.messages.create(
+        response = client.messages.create(
             model=model,
             max_tokens=MAX_TOKENS,
+            temperature=TEMPERATURE, # 新增 temperature
             system=system_prompt,
             messages=messages
         )
         return response.content[0].text
 
+    def _extract_json(self, text: str) -> str:
+        """使用括號計數提取第一個合法的 JSON 物件"""
+        text = text.strip()
+        idx = text.find('{')
+        if idx == -1:
+            return text
+        
+        balance = 0
+        for i in range(idx, len(text)):
+            if text[i] == '{':
+                balance += 1
+            elif text[i] == '}':
+                balance -= 1
+                if balance == 0:
+                    return text[idx : i+1]
+        return text
+
     def _parse_translation_response(self, response_content: str, batch_subtitles: List[Tuple[str, str, str]],
                                      target_lang1: str, target_lang2: str) -> List[Dict[str, str]]:
         """解析翻譯回應"""
         try:
-            # 增強 JSON 提取
-            json_match = re.search(r'\{[\s\S]*\}', response_content)
-            if json_match:
-                response_content = json_match.group()
-
-            parsed_json = json.loads(response_content)
+            # 使用增強的 JSON 提取 (替代 greedy regex)
+            json_str = self._extract_json(response_content)
+            
+            parsed_json = json.loads(json_str)
             translations_list = parsed_json.get("translations", [])
             trans_map = {str(item.get("id")): item for item in translations_list}
 
@@ -270,7 +324,7 @@ JSON 結構必須為：
                     })
             return final_results
         except Exception as e:
-            logger.error(f"解析失敗: {e}")
+            logger.error(f"解析失敗: {e}. Content: {response_content[:200]}...")
             raise ValueError("Model failed to return valid JSON")
 
     def translate_subtitles(self, subtitles: List[Tuple[str, str, str]],
@@ -282,6 +336,7 @@ JSON 結構必須為：
         # 重要：每次翻譯新文件前先重置對話歷史
         self.reset_conversation()
         
+        # 初始化為 None 的列表，長度與字幕相同
         translated_subtitles = [None] * len(subtitles)
         total = len(subtitles)
         batches = [(i, subtitles[i:i+BATCH_SIZE]) for i in range(0, total, BATCH_SIZE)]
@@ -291,6 +346,7 @@ JSON 結構必須為：
             # 並行模式 (不使用歷史)
             max_workers = 5 
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # 這裡不需要傳遞 self.client，因為 _translate_batch 會自己建立 local_client
                 future_to_batch = {
                     executor.submit(
                         self._translate_batch, 
@@ -304,9 +360,15 @@ JSON 結構必須為：
                         results = future.result()
                         for j, res in enumerate(results):
                             if start_idx + j < total: translated_subtitles[start_idx + j] = res
-                    except Exception:
+                    except Exception as e:
+                        logger.error(f"Batch failed: {e}")
                         for j, (_, _, text) in enumerate(batch):
-                            if start_idx + j < total: translated_subtitles[start_idx + j] = {'original': text, target_lang1: '[失敗]', target_lang2: '[Failed]'}
+                            if start_idx + j < total: 
+                                translated_subtitles[start_idx + j] = {
+                                    'original': text, 
+                                    target_lang1: '[失敗]', 
+                                    target_lang2: '[Failed]'
+                                }
                     completed_count += len(batch)
                     progress_callback(min(completed_count / total, 1.0))
         else:
@@ -316,14 +378,30 @@ JSON 結構必須為：
                     results = self._translate_batch(batch, target_lang1, target_lang2, prompt1, prompt2, model, True)
                     for j, res in enumerate(results):
                         if start_idx + j < total: translated_subtitles[start_idx + j] = res
-                except Exception:
+                except Exception as e:
+                    logger.error(f"Batch failed: {e}")
                     for j, (_, _, text) in enumerate(batch):
-                        if start_idx + j < total: translated_subtitles[start_idx + j] = {'original': text, target_lang1: '[失敗]', target_lang2: '[Failed]'}
+                        if start_idx + j < total: 
+                            translated_subtitles[start_idx + j] = {
+                                'original': text, 
+                                target_lang1: '[失敗]', 
+                                target_lang2: '[Failed]'
+                            }
                 completed_count += len(batch)
                 progress_callback(min(completed_count / total, 1.0))
                 time.sleep(0.5)
 
-        return [t for t in translated_subtitles if t is not None]
+        # 確保回傳結果不被過濾，若有 None (理論上不應有) 則補全
+        final_output = []
+        for i, item in enumerate(translated_subtitles):
+            if item is None:
+                # Fallback if something went wrong
+                orig = subtitles[i][2] if i < len(subtitles) else ""
+                final_output.append({'original': orig, target_lang1: '[System Error]', target_lang2: '[System Error]'})
+            else:
+                final_output.append(item)
+                
+        return final_output
 
     def reset_conversation(self):
         self.conversation_history = []
@@ -372,6 +450,7 @@ def bilingual_srt_translator():
 
     if api_key_valid and len(st.session_state.available_models) == 1:
         try:
+            # 這裡只為了獲取模型列表，暫時建立一個 translator
             temp_translator = SubtitleTranslator(api_key, api_provider)
             fetched_models = temp_translator.get_available_models()
             if fetched_models:
@@ -406,7 +485,7 @@ def bilingual_srt_translator():
     use_continuous_conversation = st.checkbox(
         "使用持續對話 (開啟=高品質上下文，關閉=極速並行翻譯)", 
         value=True,
-        help="開啟：模型會記得上一段翻譯內容，術語更一致，但速度較慢。\n關閉：同時翻譯多個片段，速度極快，但前後文關聯較弱。"
+        help="開啟：模型會記得上一段翻譯內容，術語更一致，但速度較慢。會自動管理對話長度以避免 Context Window 限制。\n關閉：同時翻譯多個片段，速度極快，但前後文關聯較弱。"
     )
     
     if st.button("重置翻譯對話歷史"):
@@ -425,6 +504,7 @@ def bilingual_srt_translator():
             content = SubtitleProcessor.clean_text(content)
             subtitles = SubtitleProcessor.parse_srt(content)
 
+            # 確保 translator 存在且 key 正確
             needs_new_translator = (
                 'translator' not in st.session_state or
                 st.session_state.get('translator_api_key') != api_key or
@@ -456,7 +536,6 @@ def bilingual_srt_translator():
             processing_time = end_time - start_time
             status_text.success(f"✅ 翻譯完成！總處理時間：{processing_time:.2f} 秒 ({mode_text})")
             
-            # 修復：完整性檢查
             if len(st.session_state.translated_subtitles) != len(subtitles):
                 st.warning(f"⚠️ 警告：原文有 {len(subtitles)} 句，但翻譯結果只有 {len(st.session_state.translated_subtitles)} 句。輸出可能不完整。")
 
