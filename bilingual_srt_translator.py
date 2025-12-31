@@ -31,6 +31,12 @@ TEMPERATURE = 0.1
 BATCH_SIZE = 30
 LANGUAGE_OPTIONS = ["繁體中文", "英文", "日文", "馬來語", "廣東話口語", "德文"]
 API_PROVIDERS = ["OpenAI", "Claude"]
+
+# 翻譯失敗占位字串 (統一使用)
+FAIL_MARKER_ZH = "[翻譯失敗]"
+FAIL_MARKER_EN = "[Translation failed]"
+MISSING_MARKER_ZH = "[翻譯缺失]"
+MISSING_MARKER_EN = "[Translation missing]"
 # 包含已知穩定模型及未來可能模型
 CLAUDE_MODELS = [
     "claude-3-5-sonnet-20241022",
@@ -113,19 +119,19 @@ class SubtitleProcessor:
             if i < len(translations) and translations[i] is not None:
                 translation = translations[i]
             else:
-                translation = {'original': original_text, lang1: '[翻譯缺失]', lang2: '[Missing]'}
+                translation = {'original': original_text, lang1: MISSING_MARKER_ZH, lang2: MISSING_MARKER_EN}
 
             output.append(f"{number}\n{timestamp}")
             if format_type == "bilingual":
                 original = translation.get('original', original_text)
-                translated = translation.get(lang1, f'[缺失翻譯: {original}]')
+                translated = translation.get(lang1, MISSING_MARKER_ZH)
                 output.append(f"{original}\n{translated}")
             elif format_type == "dual_lang":
-                lang1_text = translation.get(lang1, f'[缺失翻譯: {original_text}]')
-                lang2_text = translation.get(lang2, f'[Missing translation: {original_text}]')
+                lang1_text = translation.get(lang1, MISSING_MARKER_ZH)
+                lang2_text = translation.get(lang2, MISSING_MARKER_EN)
                 output.append(f"{lang1_text}\n{lang2_text}")
             else:  # 單一語言
-                output.append(translation.get(lang1, f'[缺失翻譯: {original_text}]'))
+                output.append(translation.get(lang1, MISSING_MARKER_ZH))
             output.append("")
         return "\n".join(output).strip()
 
@@ -349,20 +355,39 @@ JSON 結構必須為：
         return response.content[0].text
 
     def _extract_json(self, text: str) -> str:
-        """使用括號計數提取第一個合法的 JSON 物件"""
+        """使用括號計數提取第一個合法的 JSON 物件（正確處理字串內的括號）"""
         text = text.strip()
         idx = text.find('{')
         if idx == -1:
             return text
-        
+
         balance = 0
+        in_string = False
+        escape = False
+
         for i in range(idx, len(text)):
-            if text[i] == '{':
-                balance += 1
-            elif text[i] == '}':
-                balance -= 1
-                if balance == 0:
-                    return text[idx : i+1]
+            char = text[i]
+
+            if escape:
+                escape = False
+                continue
+
+            if char == '\\' and in_string:
+                escape = True
+                continue
+
+            if char == '"' and not escape:
+                in_string = not in_string
+                continue
+
+            if not in_string:
+                if char == '{':
+                    balance += 1
+                elif char == '}':
+                    balance -= 1
+                    if balance == 0:
+                        return text[idx : i+1]
+
         return text
 
     def _parse_translation_response(self, response_content: str, batch_subtitles: List[Tuple[str, str, str]],
@@ -382,14 +407,14 @@ JSON 結構必須為：
                 if item:
                     final_results.append({
                         'original': item.get('original', original_text),
-                        target_lang1: item.get(target_lang1, '[翻譯缺失]'),
-                        target_lang2: item.get(target_lang2, '[Translation missing]')
+                        target_lang1: item.get(target_lang1, MISSING_MARKER_ZH),
+                        target_lang2: item.get(target_lang2, MISSING_MARKER_EN)
                     })
                 else:
                     final_results.append({
                         'original': original_text,
-                        target_lang1: '[翻譯失敗]',
-                        target_lang2: '[Translation failed]'
+                        target_lang1: FAIL_MARKER_ZH,
+                        target_lang2: FAIL_MARKER_EN
                     })
             return final_results
         except Exception as e:
@@ -432,11 +457,11 @@ JSON 結構必須為：
                     except Exception as e:
                         logger.error(f"Batch failed: {e}")
                         for j, (_, _, text) in enumerate(batch):
-                            if start_idx + j < total: 
+                            if start_idx + j < total:
                                 translated_subtitles[start_idx + j] = {
-                                    'original': text, 
-                                    target_lang1: '[失敗]', 
-                                    target_lang2: '[Failed]'
+                                    'original': text,
+                                    target_lang1: FAIL_MARKER_ZH,
+                                    target_lang2: FAIL_MARKER_EN
                                 }
                     completed_count += len(batch)
                     progress_callback(min(completed_count / total, 1.0))
@@ -450,11 +475,11 @@ JSON 結構必須為：
                 except Exception as e:
                     logger.error(f"Batch failed: {e}")
                     for j, (_, _, text) in enumerate(batch):
-                        if start_idx + j < total: 
+                        if start_idx + j < total:
                             translated_subtitles[start_idx + j] = {
-                                'original': text, 
-                                target_lang1: '[失敗]', 
-                                target_lang2: '[Failed]'
+                                'original': text,
+                                target_lang1: FAIL_MARKER_ZH,
+                                target_lang2: FAIL_MARKER_EN
                             }
                 completed_count += len(batch)
                 progress_callback(min(completed_count / total, 1.0))
@@ -657,7 +682,9 @@ def bilingual_srt_translator():
                 mime="text/plain"
             )
 
-            missing_translations = [t for t in st.session_state.translated_subtitles if t and any('[缺失翻譯' in v or '[翻譯失敗]' in v for v in t.values())]
+            missing_translations = [t for t in st.session_state.translated_subtitles if t and any(
+                v in (FAIL_MARKER_ZH, FAIL_MARKER_EN, MISSING_MARKER_ZH, MISSING_MARKER_EN) for v in t.values()
+            )]
             if missing_translations:
                 st.warning(f"⚠️ 注意：有 {len(missing_translations)} 個字幕未能正確翻譯。\n")
 
