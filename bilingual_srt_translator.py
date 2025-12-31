@@ -445,16 +445,37 @@ JSON 結構必須為：
                             target_lang1: str, target_lang2: str,
                             prompt1: str, prompt2: str,
                             progress_callback, model: str,
-                            use_continuous_conversation: bool = True) -> List[Dict[str, str]]:
-        
+                            use_continuous_conversation: bool = True,
+                            status_callback=None) -> Tuple[List[Dict[str, str]], List[Dict]]:
+        """
+        翻譯字幕
+        返回: (翻譯結果列表, batch 狀態列表)
+        """
         # 重要：每次翻譯新文件前先重置對話歷史
         self.reset_conversation()
-        
+
         # 初始化為 None 的列表，長度與字幕相同
         translated_subtitles = [None] * len(subtitles)
         total = len(subtitles)
         batches = [(i, subtitles[i:i+BATCH_SIZE]) for i in range(0, total, BATCH_SIZE)]
         completed_count = 0
+        batch_statuses = []  # 記錄每個 batch 的狀態
+
+        # 初始化 batch 狀態
+        for i, (start_idx, batch) in enumerate(batches):
+            batch_statuses.append({
+                "batch_num": i + 1,
+                "start": start_idx + 1,
+                "end": min(start_idx + len(batch), total),
+                "status": "pending",
+                "error": None
+            })
+
+        def update_batch_status(batch_idx, status, error=None):
+            batch_statuses[batch_idx]["status"] = status
+            batch_statuses[batch_idx]["error"] = error
+            if status_callback:
+                status_callback(batch_statuses)
 
         if not use_continuous_conversation:
             # 並行模式 (不使用歷史，但加入前情提要)
@@ -463,7 +484,7 @@ JSON 結構必須為：
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_batch = {}
-                for start_idx, batch in batches:
+                for batch_idx, (start_idx, batch) in enumerate(batches):
                     # 取前 context_size 句作為上下文（第一個 batch 沒有上下文）
                     if start_idx > 0:
                         context_start = max(0, start_idx - context_size)
@@ -471,19 +492,25 @@ JSON 結構必須為：
                     else:
                         context = None
 
+                    update_batch_status(batch_idx, "running")
                     future = executor.submit(
                         self._translate_batch,
                         batch, target_lang1, target_lang2, prompt1, prompt2, model, False, context
                     )
-                    future_to_batch[future] = (start_idx, batch)
+                    future_to_batch[future] = (batch_idx, start_idx, batch)
+
                 for future in concurrent.futures.as_completed(future_to_batch):
-                    start_idx, batch = future_to_batch[future]
+                    batch_idx, start_idx, batch = future_to_batch[future]
                     try:
                         results = future.result()
                         for j, res in enumerate(results):
-                            if start_idx + j < total: translated_subtitles[start_idx + j] = res
+                            if start_idx + j < total:
+                                translated_subtitles[start_idx + j] = res
+                        update_batch_status(batch_idx, "success")
                     except Exception as e:
-                        logger.error(f"Batch failed: {e}")
+                        error_msg = str(e)[:100]
+                        logger.error(f"Batch {batch_idx + 1} failed: {e}")
+                        update_batch_status(batch_idx, "failed", error_msg)
                         for j, (_, _, text) in enumerate(batch):
                             if start_idx + j < total:
                                 translated_subtitles[start_idx + j] = {
@@ -495,13 +522,18 @@ JSON 結構必須為：
                     progress_callback(min(completed_count / total, 1.0))
         else:
             # 串行模式 (持續對話)
-            for start_idx, batch in batches:
+            for batch_idx, (start_idx, batch) in enumerate(batches):
+                update_batch_status(batch_idx, "running")
                 try:
                     results = self._translate_batch(batch, target_lang1, target_lang2, prompt1, prompt2, model, True)
                     for j, res in enumerate(results):
-                        if start_idx + j < total: translated_subtitles[start_idx + j] = res
+                        if start_idx + j < total:
+                            translated_subtitles[start_idx + j] = res
+                    update_batch_status(batch_idx, "success")
                 except Exception as e:
-                    logger.error(f"Batch failed: {e}")
+                    error_msg = str(e)[:100]
+                    logger.error(f"Batch {batch_idx + 1} failed: {e}")
+                    update_batch_status(batch_idx, "failed", error_msg)
                     for j, (_, _, text) in enumerate(batch):
                         if start_idx + j < total:
                             translated_subtitles[start_idx + j] = {
@@ -522,8 +554,8 @@ JSON 結構必須為：
                 final_output.append({'original': orig, target_lang1: '[System Error]', target_lang2: '[System Error]'})
             else:
                 final_output.append(item)
-                
-        return final_output
+
+        return final_output, batch_statuses
 
     def reset_conversation(self):
         self.conversation_history = []
@@ -698,22 +730,49 @@ def bilingual_srt_translator():
 
             progress_bar = st.progress(0)
             status_text = st.empty()
+            batch_status_container = st.empty()
+
+            # 用於顯示 batch 狀態的回調函數
+            def display_batch_status(statuses):
+                status_icons = {"pending": "⏳", "running": "🔄", "success": "✅", "failed": "❌"}
+                lines = []
+                for s in statuses:
+                    icon = status_icons.get(s["status"], "❓")
+                    line = f"{icon} Batch {s['batch_num']} (字幕 {s['start']}-{s['end']})"
+                    if s["status"] == "failed" and s["error"]:
+                        line += f": {s['error']}"
+                    lines.append(line)
+                batch_status_container.text("\n".join(lines))
 
             mode_text = "串行上下文模式" if use_continuous_conversation else "並行極速模式"
             with st.spinner(f"正在使用 {api_provider} {model_name} 翻譯 ({mode_text})..."):
                 start_time = time.time()
-                st.session_state.translated_subtitles = st.session_state.translator.translate_subtitles(
-                    subtitles, target_lang1, target_lang2, prompt1, prompt2, 
-                    progress_bar.progress, model_name, use_continuous_conversation
+                translated, batch_statuses = st.session_state.translator.translate_subtitles(
+                    subtitles, target_lang1, target_lang2, prompt1, prompt2,
+                    progress_bar.progress, model_name, use_continuous_conversation,
+                    status_callback=display_batch_status
                 )
+                st.session_state.translated_subtitles = translated
+                st.session_state.batch_statuses = batch_statuses
                 st.session_state.original_subtitles = subtitles
                 st.session_state.translated_lang1 = target_lang1
                 st.session_state.translated_lang2 = target_lang2
                 end_time = time.time()
 
             processing_time = end_time - start_time
-            status_text.success(f"✅ 翻譯完成！總處理時間：{processing_time:.2f} 秒 ({mode_text})")
-            
+
+            # 統計失敗的 batch
+            failed_batches = [s for s in batch_statuses if s["status"] == "failed"]
+
+            if failed_batches:
+                status_text.warning(f"⚠️ 翻譯完成（{len(failed_batches)} 個批次失敗）- 處理時間：{processing_time:.2f} 秒")
+                # 顯示失敗詳情
+                with st.expander("查看失敗批次詳情", expanded=True):
+                    for s in failed_batches:
+                        st.error(f"Batch {s['batch_num']} (字幕 {s['start']}-{s['end']}): {s['error']}")
+            else:
+                status_text.success(f"✅ 翻譯完成！總處理時間：{processing_time:.2f} 秒 ({mode_text})")
+
             if len(st.session_state.translated_subtitles) != len(subtitles):
                 st.warning(f"⚠️ 警告：原文有 {len(subtitles)} 句，但翻譯結果只有 {len(st.session_state.translated_subtitles)} 句。輸出可能不完整。")
 
