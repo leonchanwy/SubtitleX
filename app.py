@@ -1,6 +1,5 @@
 import streamlit as st
-from openai import OpenAI
-import time
+import ui_utils
 from ai_subtitle_generator import ai_subtitle_generator
 from subtitle_time_sync import subtitle_time_sync
 from bilingual_subtitle_resizer import bilingual_subtitle_resizer
@@ -9,78 +8,135 @@ from multi_language_subtitle_translator import multi_language_subtitle_translato
 from subtitle_corrector import subtitle_corrector
 from whisper_api_tool import whisper_api_tool
 
+# --- Initialization ---
 def init_session_state():
-    if 'api_key' not in st.session_state:
-        st.session_state['api_key'] = ""
-    if 'api_key_valid' not in st.session_state:
-        st.session_state['api_key_valid'] = False
-    if 'logged_in' not in st.session_state:
-        st.session_state['logged_in'] = False
-    if 'name' not in st.session_state:
-        st.session_state['name'] = None
-    if 'username' not in st.session_state:
-        st.session_state['username'] = None
-
-def validate_api_key(api_key):
-    try:
-        client = OpenAI(api_key=api_key)
-        client.models.list()
-        return True
-    except Exception:
-        return False
-
-def api_key_input():
-    api_key = st.sidebar.text_input(
-        "輸入您的 OpenAI API Key",
-        value=st.session_state['api_key'],
-        type="password",
-        key="api_key_input"
-    )
+    # Global API Keys
+    if 'openai_api_key' not in st.session_state:
+        st.session_state.openai_api_key = ''
+    if 'claude_api_key' not in st.session_state:
+        st.session_state.claude_api_key = ''
     
-    if api_key != st.session_state['api_key']:
-        st.session_state['api_key'] = api_key
-        if api_key:
-            if validate_api_key(api_key):
-                st.sidebar.success("API Key 有效")
-                st.session_state['api_key_valid'] = True
-            else:
-                st.sidebar.error("無效的 API Key")
-                st.session_state['api_key_valid'] = False
-        else:
-            st.session_state['api_key_valid'] = False
+    # Navigation
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = "Home"
 
-def main():
-    st.set_page_config(page_title="剪接神器", layout="wide")
-    init_session_state()
-
-    st.markdown(
-        """
-        <script>
-        var api_key = localStorage.getItem('openai_api_key');
-        if (api_key) {
-            document.querySelector('input[type="password"]').value = api_key;
-            document.querySelector('input[type="password"]').dispatchEvent(new Event('input'));
+# --- Sidebar Logic ---
+def render_sidebar():
+    with st.sidebar:
+        st.image("https://img.icons8.com/clouds/100/000000/video-editing.png", width=80)
+        st.title("SubtitleX Tool")
+        
+        # Navigation
+        st.subheader("📍 Navigation")
+        
+        pages = {
+            "🏠 Home": "Home",
+            "🚀 AI Subtitle Generator": "AI 生成字幕",
+            "🌐 Bilingual Translator": "雙語字幕翻譯",
+            "🌍 Multi-language Translator": "多語言字幕翻譯",
+            "⏱️ Time Sync": "字幕時間同步",
+            "📝 Spell Corrector": "字幕錯字修正",
+            "📏 Subtitle Resizer": "雙語字幕大小調整",
+            "🎙️ Whisper Tool": "Whisper API Tool"
         }
-        </script>
-        """,
-        unsafe_allow_html=True
-    )
+        
+        # Update session state when selectbox changes
+        selected_label = st.selectbox(
+            "Go to:",
+            options=list(pages.keys()),
+            index=list(pages.values()).index(st.session_state.current_page) if st.session_state.current_page in pages.values() else 0,
+            key="nav_selector"
+        )
+        
+        # Sync selection to current_page
+        if st.session_state.nav_selector:
+            st.session_state.current_page = pages[selected_label]
 
-    st.sidebar.title("導航")
+        st.markdown("---")
+        
+        # Global Settings (API Keys)
+        with st.expander("⚙️ Global Settings", expanded=False):
+            st.markdown("### API Keys")
+            
+            # OpenAI Key
+            new_openai_key = st.text_input(
+                "OpenAI API Key",
+                value=st.session_state.openai_api_key,
+                type="password",
+                help="Required for AI Subtitles and OpenAI translation."
+            )
+            if new_openai_key != st.session_state.openai_api_key:
+                st.session_state.openai_api_key = new_openai_key
+                st.rerun()
 
-    api_key_input()
+            # Claude Key
+            new_claude_key = st.text_input(
+                "Anthropic (Claude) API Key",
+                value=st.session_state.claude_api_key,
+                type="password",
+                help="Required for Claude translation."
+            )
+            if new_claude_key != st.session_state.claude_api_key:
+                st.session_state.claude_api_key = new_claude_key
+                st.rerun()
 
-    if not st.session_state['api_key_valid']:
-        st.warning("請在側邊欄輸入有效的 OpenAI API Key 以使用需要 API 的功能")
+        # Status Indicators
+        st.markdown("### System Status")
+        ui_utils.render_api_key_status("OpenAI", bool(st.session_state.openai_api_key))
+        ui_utils.render_api_key_status("Claude", bool(st.session_state.claude_api_key))
+        
+        st.markdown("---")
+        st.info("© 2025 SubtitleX. All rights reserved.")
 
-    page = st.sidebar.selectbox(
-        "選擇功能",
-        ["AI 生成字幕", "字幕時間同步", "雙語字幕大小調整", 
-         "雙語字幕翻譯", "多語言字幕翻譯", "字幕錯字修正",
-         "Whisper API Tool"]
-    )
+# --- Home Dashboard ---
+def render_home():
+    ui_utils.render_header("👋 Welcome to SubtitleX", "Your all-in-one AI toolkit for subtitle creation and localization.")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if ui_utils.render_card("AI Generator", "Generate subtitles from video/audio using Whisper.", "🚀", "Launch", "btn_ai_gen"):
+            st.session_state.current_page = "AI 生成字幕"
+            st.rerun()
+            
+        if ui_utils.render_card("Time Sync", "Fix out-of-sync SRT files automatically.", "⏱️", "Launch", "btn_time_sync"):
+            st.session_state.current_page = "字幕時間同步"
+            st.rerun()
 
-    if page == "AI 生成字幕":
+    with col2:
+        if ui_utils.render_card("Bilingual Translator", "Translate SRTs using OpenAI or Claude.", "🌐", "Launch", "btn_bi_trans"):
+            st.session_state.current_page = "雙語字幕翻譯"
+            st.rerun()
+            
+        if ui_utils.render_card("Spell Corrector", "Fix common OCR or speech errors.", "📝", "Launch", "btn_correct"):
+            st.session_state.current_page = "字幕錯字修正"
+            st.rerun()
+
+    with col3:
+        if ui_utils.render_card("Multi-lang Translator", "Batch translate to multiple languages.", "🌍", "Launch", "btn_multi_trans"):
+            st.session_state.current_page = "多語言字幕翻譯"
+            st.rerun()
+            
+        if ui_utils.render_card("Subtitle Resizer", "Adjust font sizes for bilingual display.", "📏", "Launch", "btn_resize"):
+            st.session_state.current_page = "雙語字幕大小調整"
+            st.rerun()
+
+# --- Main App Logic ---
+def main():
+    # Setup page config once
+    ui_utils.setup_page("SubtitleX Toolkit")
+    
+    init_session_state()
+    render_sidebar()
+    
+    # Routing
+    page = st.session_state.current_page
+    
+    if page == "Home":
+        render_home()
+    elif page == "AI 生成字幕":
+        # Pass control to the module, but we might need to update the module 
+        # to respect the global session state for keys.
         ai_subtitle_generator()
     elif page == "字幕時間同步":
         subtitle_time_sync()
@@ -94,9 +150,6 @@ def main():
         subtitle_corrector()
     elif page == "Whisper API Tool":
         whisper_api_tool()
-
-    st.sidebar.markdown("---")
-    st.sidebar.info("© 2024 剪接神器. All rights reserved.")
 
 if __name__ == "__main__":
     main()

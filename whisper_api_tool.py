@@ -3,24 +3,10 @@ import openai
 from pathlib import Path
 import tempfile
 import os
+import ui_utils
 
-def set_openai_api_key(api_key):
-    openai.api_key = api_key
-
-def init_session_state():
-    """初始化 session state"""
-    if 'api_key' not in st.session_state:
-        st.session_state.api_key = ''
-
-def save_api_key(api_key: str):
-    """儲存 API Key 到文件"""
-    try:
-        with open('api_key.txt', 'w') as file:
-            file.write(api_key)
-    except Exception as e:
-        st.error(f"保存 API Key 失敗: {e}")
-
-def transcribe_audio(audio_file, model, language, prompt, response_format, temperature, timestamp_granularities=None):
+def transcribe_audio(api_key, audio_file, model, language, prompt, response_format, temperature, timestamp_granularities=None):
+    client = openai.OpenAI(api_key=api_key)
     params = {
         "model": model,
         "file": audio_file,
@@ -32,11 +18,12 @@ def transcribe_audio(audio_file, model, language, prompt, response_format, tempe
     if timestamp_granularities:
         params["timestamp_granularities"] = timestamp_granularities
     
-    transcript = openai.audio.transcriptions.create(**params)
+    transcript = client.audio.transcriptions.create(**params)
     return transcript.text if response_format == 'json' else transcript
 
-def translate_audio(audio_file, model, prompt, response_format, temperature):
-    translation = openai.audio.translations.create(
+def translate_audio(api_key, audio_file, model, prompt, response_format, temperature):
+    client = openai.OpenAI(api_key=api_key)
+    translation = client.audio.translations.create(
         model=model,
         file=audio_file,
         prompt=prompt if prompt else None,
@@ -45,8 +32,9 @@ def translate_audio(audio_file, model, prompt, response_format, temperature):
     )
     return translation.text if response_format == 'json' else translation
 
-def text_to_speech(text, model, voice, response_format, speed):
-    response = openai.audio.speech.create(
+def text_to_speech(api_key, text, model, voice, response_format, speed):
+    client = openai.OpenAI(api_key=api_key)
+    response = client.audio.speech.create(
         model=model,
         voice=voice,
         input=text,
@@ -56,149 +44,126 @@ def text_to_speech(text, model, voice, response_format, speed):
     return response.content
 
 def whisper_api_tool():
-    init_session_state()
-    st.title("🇯🇵 Whisper API Tool")
-    api_key = st.text_input("輸入您的 OpenAI API Key", value=st.session_state.api_key, type="password")
-    if api_key != st.session_state.api_key:
-        st.session_state.api_key = api_key
-        save_api_key(api_key)
-        st.success("API Key 已保存")
+    ui_utils.render_header("🎙️ Whisper API Tool", "Direct access to OpenAI's audio capabilities: Transcribe, Translate, and TTS.")
+    
+    if not ui_utils.validate_api_inputs(["OpenAI"]):
+        st.stop()
+    
+    api_key = ui_utils.get_api_key("OpenAI")
 
-    tab1, tab2, tab3 = st.tabs(["音頻轉錄", "音頻翻譯", "文字轉語音"])
+    tab1, tab2, tab3 = st.tabs(["Audio Transcription", "Audio Translation", "Text to Speech"])
 
-    # 定義語言列表，將指定語言放在前面
+    # Language List
     languages = [
-        ("zh", "中文"),
-        ("en", "英文"),
-        ("ms", "馬來文"),
-        ("ja", "日文"),
-        ("de", "德文"),
-        ("af", "南非荷蘭語"),
-        ("ar", "阿拉伯語"),
-        ("hy", "亞美尼亞語"),
-        ("az", "阿塞拜疆語"),
-        ("be", "白俄羅斯語"),
-        ("bs", "波斯尼亞語"),
-        ("bg", "保加利亞語"),
-        ("ca", "加泰羅尼亞語"),
-        ("hr", "克羅地亞語"),
-        ("cs", "捷克語"),
-        ("da", "丹麥語"),
-        ("nl", "荷蘭語"),
-        ("et", "愛沙尼亞語"),
-        ("fi", "芬蘭語"),
-        ("fr", "法語"),
-        ("gl", "加利西亞語"),
-        ("el", "希臘語"),
-        ("he", "希伯來語"),
-        ("hi", "印地語"),
-        ("hu", "匈牙利語"),
-        ("is", "冰島語"),
-        ("id", "印尼語"),
-        ("it", "義大利語"),
-        ("kk", "哈薩克語"),
-        ("ko", "韓語"),
-        ("lv", "拉脫維亞語"),
-        ("lt", "立陶宛語"),
-        ("mk", "馬其頓語"),
-        ("mi", "毛利語"),
-        ("mr", "馬拉地語"),
-        ("ne", "尼泊爾語"),
-        ("no", "挪威語"),
-        ("fa", "波斯語"),
-        ("pl", "波蘭語"),
-        ("pt", "葡萄牙語"),
-        ("ro", "羅馬尼亞語"),
-        ("ru", "俄語"),
-        ("sr", "塞爾維亞語"),
-        ("sk", "斯洛伐克語"),
-        ("sl", "斯洛維尼亞語"),
-        ("es", "西班牙語"),
-        ("sw", "斯瓦希里語"),
-        ("sv", "瑞典語"),
-        ("tl", "他加祿語"),
-        ("ta", "泰米爾語"),
-        ("th", "泰語"),
-        ("tr", "土耳其語"),
-        ("uk", "烏克蘭語"),
-        ("ur", "烏爾都語"),
-        ("vi", "越南語"),
-        ("cy", "威爾士語")
+        ("zh", "Chinese"), ("en", "English"), ("ms", "Malay"), ("ja", "Japanese"), 
+        ("de", "German"), ("fr", "French"), ("es", "Spanish"), ("it", "Italian"),
+        ("ko", "Korean"), ("ru", "Russian")
     ]
 
     with tab1:
-        st.header("音頻轉錄")
-        uploaded_file = st.file_uploader("選擇音頻文件", type=["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"], key="transcribe_file_uploader")
-        model = st.selectbox("模型", ["whisper-1"], key="transcribe_model")
-        language = st.selectbox("語言", languages, format_func=lambda x: f"{x[1]} ({x[0]})", key="transcribe_language")
-        prompt = st.text_area("提示詞 (可選)", key="transcribe_prompt")
-        response_format = st.selectbox("響應格式", ["json", "text", "srt", "verbose_json", "vtt"], key="transcribe_response_format")
-        temperature = st.slider("溫度", 0.0, 1.0, 0.0, 0.1, key="transcribe_temperature")
+        st.subheader("Transcribe Audio")
+        uploaded_file = st.file_uploader("Upload Audio", type=["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"], key="transcribe_file_uploader")
         
-        # 只有當 response_format 為 verbose_json 時才顯示 timestamp_granularities 選項
+        col1, col2 = st.columns(2)
+        with col1:
+            model = st.selectbox("Model", ["whisper-1"], key="transcribe_model")
+            language = st.selectbox("Language", languages, format_func=lambda x: f"{x[1]} ({x[0]})", key="transcribe_language")
+        with col2:
+            response_format = st.selectbox("Response Format", ["json", "text", "srt", "verbose_json", "vtt"], key="transcribe_response_format")
+            temperature = st.slider("Temperature", 0.0, 1.0, 0.0, 0.1, key="transcribe_temperature")
+        
+        prompt = st.text_area("Prompt (Optional)", key="transcribe_prompt")
+        
         timestamp_granularities = None
         if response_format == "verbose_json":
             timestamp_options = st.multiselect(
-                "時間戳精度",
+                "Timestamp Granularities",
                 ["word", "segment"],
                 default=["segment"],
-                help="選擇時間戳的精度。注意：生成詞級時間戳會增加延遲。",
+                help="Word-level timestamps increase latency.",
                 key="transcribe_timestamp_granularities"
             )
             if timestamp_options:
                 timestamp_granularities = timestamp_options
         
-        if uploaded_file is not None and st.button("轉錄", key="transcribe_button"):
-            with st.spinner("正在轉錄..."):
+        if uploaded_file is not None and st.button("Transcribe", key="transcribe_button", type="primary"):
+            with st.spinner("Transcribing..."):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_file:
                     tmp_file.write(uploaded_file.getvalue())
                     tmp_file_path = tmp_file.name
                 
-                with open(tmp_file_path, "rb") as audio_file:
-                    transcript = transcribe_audio(audio_file, model, language[0], prompt, response_format, temperature, timestamp_granularities)
-                
-                os.unlink(tmp_file_path)
-                
-                st.text_area("轉錄結果", transcript, height=250, key="transcribe_result")
-
+                try:
+                    with open(tmp_file_path, "rb") as audio_file:
+                        transcript = transcribe_audio(api_key, audio_file, model, language[0], prompt, response_format, temperature, timestamp_granularities)
+                    st.text_area("Result", transcript, height=250, key="transcribe_result")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                finally:
+                    if os.path.exists(tmp_file_path): os.unlink(tmp_file_path)
 
     with tab2:
-        st.header("音頻翻譯")
-        uploaded_file = st.file_uploader("選擇要翻譯的音頻文件", type=["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"], key="translate_file_uploader")
-        model = st.selectbox("模型", ["whisper-1"], key="translate_model")
-        prompt = st.text_area("提示詞 (可選)", key="translate_prompt")
-        response_format = st.selectbox("響應格式", ["json", "text", "srt", "verbose_json", "vtt"], key="translate_response_format")
-        temperature = st.slider("溫度", 0.0, 1.0, 0.0, 0.1, key="translate_temperature")
+        st.subheader("Translate Audio (to English)")
+        uploaded_file = st.file_uploader("Upload Audio", type=["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"], key="translate_file_uploader")
         
-        if uploaded_file is not None and st.button("翻譯", key="translate_button"):
-            with st.spinner("正在翻譯..."):
+        col1, col2 = st.columns(2)
+        with col1:
+            model = st.selectbox("Model", ["whisper-1"], key="translate_model")
+        with col2:
+            response_format = st.selectbox("Format", ["json", "text", "srt", "verbose_json", "vtt"], key="translate_response_format")
+            
+        temperature = st.slider("Temperature", 0.0, 1.0, 0.0, 0.1, key="translate_temperature")
+        prompt = st.text_area("Prompt (Optional)", key="translate_prompt")
+        
+        if uploaded_file is not None and st.button("Translate", key="translate_button", type="primary"):
+            with st.spinner("Translating..."):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_file:
                     tmp_file.write(uploaded_file.getvalue())
                     tmp_file_path = tmp_file.name
                 
-                with open(tmp_file_path, "rb") as audio_file:
-                    translation = translate_audio(audio_file, model, prompt, response_format, temperature)
-                
-                os.unlink(tmp_file_path)
-                
-                st.text_area("翻譯結果", translation, height=250, key="translate_result")
+                try:
+                    with open(tmp_file_path, "rb") as audio_file:
+                        translation = translate_audio(api_key, audio_file, model, prompt, response_format, temperature)
+                    st.text_area("Result", translation, height=250, key="translate_result")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                finally:
+                    if os.path.exists(tmp_file_path): os.unlink(tmp_file_path)
 
     with tab3:
-        st.header("文字轉語音")
-        text_input = st.text_area("輸入要轉換為語音的文字", height=150, key="tts_input")
-        model = st.selectbox("模型", ["tts-1", "tts-1-hd"], key="tts_model")
-        voice = st.selectbox("選擇聲音", ["alloy", "echo", "fable", "onyx", "nova", "shimmer"], key="tts_voice")
-        response_format = st.selectbox("音頻格式", ["mp3", "opus", "aac", "flac"], key="tts_response_format")
-        speed = st.slider("速度", 0.25, 4.0, 1.0, 0.25, key="tts_speed")
+        st.subheader("Text to Speech")
+        text_input = st.text_area("Input Text", height=100, key="tts_input")
         
-        if text_input and st.button("生成語音", key="tts_button"):
-            with st.spinner("正在生成音頻..."):
-                audio_content = text_to_speech(text_input, model, voice, response_format, speed)
-                
-                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{response_format}") as tmp_audio_file:
-                    tmp_audio_file.write(audio_content)
-                    tmp_audio_file_path = tmp_audio_file.name
-                
-                st.audio(tmp_audio_file_path, format=f"audio/{response_format}")
-                
-                os.unlink(tmp_audio_file_path)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            model = st.selectbox("Model", ["tts-1", "tts-1-hd"], key="tts_model")
+        with col2:
+            voice = st.selectbox("Voice", ["alloy", "echo", "fable", "onyx", "nova", "shimmer"], key="tts_voice")
+        with col3:
+            response_format = st.selectbox("Format", ["mp3", "opus", "aac", "flac"], key="tts_response_format")
+            
+        speed = st.slider("Speed", 0.25, 4.0, 1.0, 0.25, key="tts_speed")
+        
+        if text_input and st.button("Generate Speech", key="tts_button", type="primary"):
+            with st.spinner("Generating audio..."):
+                try:
+                    audio_content = text_to_speech(api_key, text_input, model, voice, response_format, speed)
+                    
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{response_format}") as tmp_audio_file:
+                        tmp_audio_file.write(audio_content)
+                        tmp_audio_file_path = tmp_audio_file.name
+                    
+                    st.audio(tmp_audio_file_path, format=f"audio/{response_format}")
+                    
+                    st.download_button(
+                        label="📥 Download Audio",
+                        data=audio_content,
+                        file_name=f"speech.{response_format}",
+                        mime=f"audio/{response_format}"
+                    )
+                    
+                    if os.path.exists(tmp_audio_file_path): os.unlink(tmp_audio_file_path)
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+if __name__ == "__main__":
+    whisper_api_tool()

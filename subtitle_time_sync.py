@@ -5,6 +5,7 @@ import re
 from datetime import timedelta
 import os
 import tempfile
+import ui_utils
 
 # Constants
 DEFAULT_MAX_DIFFERENCE = 0.5
@@ -55,7 +56,7 @@ class SRTParser:
     def parse_srt(srt_path):
         with open(srt_path, "r", encoding="utf-8") as file:
             content = file.read()
-        pattern = re.compile(r"(\d+:\d+:\d+,\d+) --> (\d+:\d+:\d+,\d+)\n(.*?)(?=\n\n|\Z)", re.DOTALL)
+        pattern = re.compile(r"(\d+\:\d+\:\d+,\d+) --> (\d+\:\d+\:\d+,\d+)\n(.*?)(?=\n\n|\Z)", re.DOTALL)
         return [(SRTParser._srt_time_to_timedelta(start), SRTParser._srt_time_to_timedelta(end), text.strip())
                 for start, end, text in pattern.findall(content)]
 
@@ -118,50 +119,33 @@ def process_files(xml_path, srt_path, max_difference_seconds):
     return SRTWriter.write_srt(adjusted_srt_data), frame_rate
 
 def subtitle_time_sync():
-    st.title("⏱️ 字幕時間同步器")
-    st.write("這個工具可以幫助您將 SRT 格式的字幕文件與影片的實際剪輯時間點同步。")
+    ui_utils.render_header("⏱️ Subtitle Time Sync", "Sync your SRT subtitles with video edit points using XML export data.")
 
-    with st.expander("點擊展開查看詳細說明"):
-        st.markdown("""
-        ### 應用簡介
-        這個工具專為處理影片字幕時間同步而設計，能夠根據影片剪輯信息自動調整字幕時間，提升字幕的準確性和觀看體驗：
-
-        1. **自動時間校正**：根據影片剪輯點自動調整字幕時間。
-        2. **智能同步**：
-           - 識別影片剪輯點，確保字幕與影片內容同步。
-           - 自動處理時間差異，提高字幕顯示的精確度。
-           - 支持各種常見的影片剪輯軟件導出的 XML 格式。
-
-        ### 主要功能
-        - 讀取影片剪輯軟件導出的 XML 文件，獲取影片剪輯信息
-        - 自動調整 SRT 格式字幕的時間軸，使其與影片剪輯點同步
-        - 允許自定義最大時間差，靈活處理不同場景
-        - 保留原始字幕文本內容，只調整時間信息
-        - 生成新的 SRT 文件，可直接用於視頻播放
-
-        ### 使用步驟
-        1. 上傳影片剪輯軟件導出的 XML 文件（包含影片剪輯信息）。
-        2. 上傳需要校正的 SRT 字幕文件。
-        3. 調整允許的最大時間差（可選）。
-        4. 點擊「開始同步」按鈕。
-        5. 下載同步後的 SRT 字幕文件。
-
-        ### 注意事項
-        - 確保上傳的 XML 文件包含正確的影片剪輯信息。
-        - SRT 文件應為標準格式，以獲得最佳同步效果。
-        - 最大時間差設置影響同步的靈敏度，請根據實際需求調整。
-        - 如遇問題，請檢查原始文件格式是否符合要求。
-        - 同步後的 SRT 文件使用 UTF-8 編碼，確保與大多數現代系統兼容。
+    with st.expander("ℹ️ How it works"):
+        st.markdown(r"""
+        **Automated Synchronization:**
+        1. Export an XML file of your video timeline from Premiere Pro or Final Cut.
+        2. Upload that XML file along with your out-of-sync SRT.
+        3. This tool will align subtitle start/end times to the nearest video cut points.
+        
+        **Supported Formats:**
+        - XML: Final Cut Pro XML, Premiere Pro XML
+        - Subtitles: Standard SRT
         """)
 
-    xml_file = st.file_uploader("上傳影片剪輯 XML 文件", type="xml")
-    srt_file = st.file_uploader("上傳需要同步的 SRT 字幕文件", type="srt")
+    col1, col2 = st.columns(2)
+    with col1:
+        xml_file = st.file_uploader("Upload Video XML", type="xml")
+    with col2:
+        srt_file = st.file_uploader("Upload SRT File", type="srt")
 
     if xml_file and srt_file:
         max_difference_seconds = st.slider(
-            "最大允許的時間差 (秒)", 0.1, 2.0, DEFAULT_MAX_DIFFERENCE, 0.1)
+            "Max Time Difference (Seconds)", 0.1, 2.0, DEFAULT_MAX_DIFFERENCE, 0.1,
+            help="Maximum allowed gap between subtitle timestamp and video cut to trigger synchronization."
+        )
 
-        if st.button("開始同步"):
+        if st.button("Start Synchronization", type="primary"):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".xml") as tmp_xml:
                 tmp_xml.write(xml_file.getvalue())
                 tmp_xml_path = tmp_xml.name
@@ -173,26 +157,22 @@ def subtitle_time_sync():
             try:
                 adjusted_content, detected_frame_rate = process_files(
                     tmp_xml_path, tmp_srt_path, max_difference_seconds)
-                st.success(f"字幕時間同步完成！檢測到的幀率：{detected_frame_rate:.2f}")
+                st.success(f"✅ Sync Complete! Detected Frame Rate: {detected_frame_rate:.2f}")
                 
-                # Get original SRT filename (without extension)
                 original_filename = os.path.splitext(srt_file.name)[0]
-                
-                # Create new filename
                 new_filename = f"{original_filename}_synced.srt"
                 
                 st.download_button(
-                    label="下載同步後的 SRT 字幕文件",
+                    label="📥 Download Synced SRT",
                     data=adjusted_content,
                     file_name=new_filename,
                     mime="text/plain"
                 )
             except Exception as e:
-                st.error(f"處理過程中出現錯誤：{str(e)}")
+                st.error(f"Error: {str(e)}")
             finally:
-                # Clean up temporary files
-                os.unlink(tmp_xml_path)
-                os.unlink(tmp_srt_path)
+                if os.path.exists(tmp_xml_path): os.unlink(tmp_xml_path)
+                if os.path.exists(tmp_srt_path): os.unlink(tmp_srt_path)
 
 if __name__ == "__main__":
     subtitle_time_sync()

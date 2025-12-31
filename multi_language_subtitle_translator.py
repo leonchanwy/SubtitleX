@@ -5,6 +5,7 @@ import re
 from typing import List, Tuple, Dict, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
 from anthropic import Anthropic, APIConnectionError, APIStatusError
+import ui_utils
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,7 +30,21 @@ class SubtitleProcessor:
         )
         matches = pattern.findall(content)
         if not matches:
-            raise ValueError("無法解析SRT文件。請確保文件格式正確。")
+            # Fallback for other formats
+            pattern = re.compile(
+                r'(\d+)\s*\n'
+                r'(\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[,.]\d{3}).*?\n'
+                r'([\s\S]*?)'
+                r'(?=\n+\d+\s*\n\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\Z)',
+                re.MULTILINE
+            )
+            matches = []
+            for match in pattern.finditer(content):
+                raw_id, timestamp, text = match.groups()
+                matches.append((raw_id.strip(), timestamp.strip(), text.strip()))
+        
+        if not matches:
+             raise ValueError("無法解析SRT文件。請確保文件格式正確。")
         return matches
 
     @staticmethod
@@ -61,7 +76,6 @@ class SubtitleTranslator:
     def __init__(self, api_key: str):
         self.client = Anthropic(
             api_key=api_key,
-            # 直接在初始化時設置 API 版本
             default_headers={"anthropic-version": "2023-06-01"}
         )
         self.conversation_history = []
@@ -137,15 +151,29 @@ class SubtitleTranslator:
         items = content.split('\n\n')
         for item in items:
             lines = item.strip().split('\n')
-            if len(lines) == 3:
-                original = lines[0].split('：', 1)[1].strip()
-                lang1 = lines[1].split('：', 1)[1].strip()
-                lang2 = lines[2].split('：', 1)[1].strip()
-                parsed.append({
-                    'original': original,
-                    target_lang1: lang1,
-                    target_lang2: lang2
-                })
+            # 寬鬆解析，只要能抓到冒號後面的內容
+            try:
+                original = ""
+                lang1_text = ""
+                lang2_text = ""
+                
+                for line in lines:
+                    if line.startswith("原文："):
+                        original = line.split("：", 1)[1].strip()
+                    elif line.startswith(f"{target_lang1}："):
+                        lang1_text = line.split("：", 1)[1].strip()
+                    elif line.startswith(f"{target_lang2}："):
+                        lang2_text = line.split("：", 1)[1].strip()
+                
+                if original or lang1_text or lang2_text:
+                    parsed.append({
+                        'original': original,
+                        target_lang1: lang1_text if lang1_text else "[Missing]",
+                        target_lang2: lang2_text if lang2_text else "[Missing]"
+                    })
+            except Exception:
+                continue
+                
         return parsed
 
     def translate_subtitles(self, subtitles: List[Tuple[str, str, str]], 
@@ -173,69 +201,40 @@ class SubtitleTranslator:
             progress = min((i + BATCH_SIZE) / total, 1.0)
             progress_callback(progress)
 
-            time.sleep(1)  # 避免 API 速率限制
+            time.sleep(1)
 
         return translated_subtitles
 
     def reset_conversation(self):
         self.conversation_history = []
 
-def load_api_key() -> Optional[str]:
-    return None
-
-def save_api_key(api_key: str):
-    with open('api_key.txt', 'w') as file:
-        file.write(api_key)
-
-def validate_api_key(api_key: str) -> bool:
-    try:
-        client = Anthropic(api_key=api_key)
-        # 嘗試進行一個簡單的 API 調用來驗證密鑰
-        client.messages.create(
-            model="claude-3-5-sonnet-20240620",
-            max_tokens=10,
-            messages=[{"role": "user", "content": "Hello"}]
-        )
-        return True
-    except (APIConnectionError, APIStatusError):
-        return False
-
 def multi_language_subtitle_translator():
-    st.title("🌐 終極版：雙語字幕翻譯器（Claude）")
+    ui_utils.render_header("🌍 Multi-Language Translator (Legacy)", "Translate to multiple languages using Claude (Batch Processing).")
 
-    api_key = st.text_input("Anthropic API 密鑰", value="", type="password")
+    if not ui_utils.validate_api_inputs(["Claude"]):
+        st.stop()
     
-    if api_key:
-        if validate_api_key(api_key):
-            st.success("API 密鑰驗證成功！")
-            save_api_key(api_key)
-        else:
-            st.error("無效的 API 密鑰。請檢查並重新輸入。")
-            return  # 如果 API 密鑰無效，不繼續執行後續代碼
+    api_key = ui_utils.get_api_key("Claude")
 
     col1, col2 = st.columns(2)
     with col1:
-        target_lang1 = st.selectbox("目標語言 1", options=LANGUAGE_OPTIONS, index=LANGUAGE_OPTIONS.index("廣東話口語"))
-        prompt1 = st.text_input("語言 1 翻譯風格", value="口語化帶俚語")
+        target_lang1 = st.selectbox("Language 1", options=LANGUAGE_OPTIONS, index=LANGUAGE_OPTIONS.index("廣東話口語"))
+        prompt1 = st.text_input("Style 1", value="口語化帶俚語")
     with col2:
-        target_lang2 = st.selectbox("目標語言 2", options=LANGUAGE_OPTIONS, index=LANGUAGE_OPTIONS.index("英文"))
-        prompt2 = st.text_input("語言 2 翻譯風格", value="都市俚語")
+        target_lang2 = st.selectbox("Language 2", options=LANGUAGE_OPTIONS, index=LANGUAGE_OPTIONS.index("英文"))
+        prompt2 = st.text_input("Style 2", value="都市俚語")
 
-    uploaded_file = st.file_uploader("選擇 SRT 文件", type="srt")
-
-    use_continuous_conversation = st.checkbox("使用持續對話（可能提高翻譯一致性）", value=True)
+    uploaded_file = st.file_uploader("Upload SRT", type="srt")
     
-    if st.button("重置翻譯對話歷史"):
+    with st.expander("Options"):
+        use_continuous_conversation = st.checkbox("Continuous Context", value=True)
+    
+    if st.button("Reset History"):
         if 'translator' in st.session_state:
             st.session_state.translator.reset_conversation()
-        st.success("翻譯對話歷史已重置")
+        st.success("History Reset")
 
-    if 'translated_subtitles' not in st.session_state:
-        st.session_state.translated_subtitles = None
-    if 'original_subtitles' not in st.session_state:
-        st.session_state.original_subtitles = None
-
-    if uploaded_file and api_key and st.button("開始翻譯", key="translate_button"):
+    if uploaded_file and st.button("Start Translation", type="primary"):
         try:
             content = uploaded_file.getvalue().decode("utf-8-sig")
             content = SubtitleProcessor.clean_text(content)
@@ -250,97 +249,60 @@ def multi_language_subtitle_translator():
             progress_bar = st.progress(0)
             status_text = st.empty()
 
-            with st.spinner("正在翻譯..."):
+            with st.spinner("Translating..."):
                 start_time = time.time()
                 st.session_state.translated_subtitles = st.session_state.translator.translate_subtitles(
                     subtitles, target_lang1, target_lang2, prompt1, prompt2, progress_bar.progress
                 )
                 st.session_state.original_subtitles = subtitles
-                end_time = time.time()
-
-            processing_time = end_time - start_time
-            status_text.success(f"✅ 翻譯完成！總處理時間：{processing_time:.2f} 秒")
+                
+            status_text.success(f"✅ Finished in {time.time() - start_time:.2f}s")
 
         except Exception as e:
-            st.error(f"❌ 處理過程中發生錯誤：{str(e)}")
-            logger.exception("翻譯過程中發生異常")
+            st.error(f"Error: {str(e)}")
+            logger.exception("Translation error")
 
-    if st.session_state.translated_subtitles:
-        st.subheader("翻譯結果")
-        download_option = st.selectbox(
-            "選擇下載格式",
-            [f"原文 + {target_lang1}", f"原文 + {target_lang2}", f"{target_lang1} + {target_lang2}", f"僅 {target_lang1}", f"僅 {target_lang2}"]
-        )
+    if st.session_state.get('translated_subtitles'):
+        st.divider()
+        st.subheader("Download")
+        
+        dl_options = [f"Original + {target_lang1}", f"Original + {target_lang2}", f"{target_lang1} + {target_lang2}", f"Only {target_lang1}", f"Only {target_lang2}"]
+        download_option = st.selectbox("Format", dl_options)
 
         preview_subtitles = st.session_state.original_subtitles[:5]
         preview_translations = st.session_state.translated_subtitles[:5]
         
         try:
-            if "原文" in download_option:
-                lang = target_lang1 if target_lang1 in download_option else target_lang2
-                preview_srt = SubtitleProcessor.format_srt(preview_subtitles, preview_translations, "bilingual", lang)
-                full_srt = SubtitleProcessor.format_srt(st.session_state.original_subtitles, st.session_state.translated_subtitles, "bilingual", lang)
-                file_name = f"原文_{lang}.srt"
-            elif "+" in download_option:
-                preview_srt = SubtitleProcessor.format_srt(preview_subtitles, preview_translations, "dual_lang", target_lang1, target_lang2)
-                full_srt = SubtitleProcessor.format_srt(st.session_state.original_subtitles, st.session_state.translated_subtitles, "dual_lang", target_lang1, target_lang2)
-                file_name = f"{target_lang1}_{target_lang2}.srt"
-            else:
-                lang = target_lang1 if target_lang1 in download_option else target_lang2
-                preview_srt = SubtitleProcessor.format_srt(preview_subtitles, preview_translations, "single", lang)
-                full_srt = SubtitleProcessor.format_srt(st.session_state.original_subtitles, st.session_state.translated_subtitles, "single", lang)
-                file_name = f"{lang}.srt"
+            format_type = "single"
+            l1 = target_lang1
+            l2 = None
             
-            st.text_area("翻譯預覽", value=preview_srt + "\n...", height=300)
+            if "Original" in download_option:
+                format_type = "bilingual"
+                l1 = target_lang1 if target_lang1 in download_option else target_lang2
+            elif "+" in download_option:
+                format_type = "dual_lang"
+                l1 = target_lang1
+                l2 = target_lang2
+            else:
+                l1 = target_lang1 if target_lang1 in download_option else target_lang2
+
+            preview_srt = SubtitleProcessor.format_srt(preview_subtitles, preview_translations, format_type, l1, l2)
+            full_srt = SubtitleProcessor.format_srt(st.session_state.original_subtitles, st.session_state.translated_subtitles, format_type, l1, l2)
+            
+            file_name = f"subtitle_{l1}_{l2 if l2 else ''}.srt".replace("__", "_")
+
+            st.text_area("Preview", value=preview_srt + "\n...", height=200)
 
             st.download_button(
-                label=f"📥 下載 {download_option} 字幕",
+                label="📥 Download",
                 data=full_srt,
                 file_name=file_name,
                 mime="text/plain"
             )
 
-            missing_translations = [t for t in st.session_state.translated_subtitles if any('[缺失翻譯' in v or '[翻譯失敗]' in v for v in t.values())]
-            if missing_translations:
-                st.warning(f"⚠️ 注意：有 {len(missing_translations)} 個字幕未能正確翻譯。")
-                if st.button("顯示未翻譯的字幕"):
-                    for mt in missing_translations:
-                        st.text(f"原文: {mt['original']}")
-                        st.text(f"{target_lang1}: {mt[target_lang1]}")
-                        st.text(f"{target_lang2}: {mt[target_lang2]}")
-                        st.text("---")
-
         except Exception as e:
-            st.error(f"❌ 生成預覽或下載文件時發生錯誤：{str(e)}")
-            logger.exception("生成預覽或下載文件時發生異常")
-
-    if st.sidebar.checkbox("啟用調試模式"):
-        st.sidebar.subheader("調試信息")
-        if st.session_state.translated_subtitles:
-            st.sidebar.json(st.session_state.translated_subtitles[:5])
-        
-        if st.sidebar.button("清除翻譯緩存"):
-            st.session_state.translated_subtitles = None
-            st.session_state.original_subtitles = None
-            st.success("翻譯緩存已清除")
-
-    st.sidebar.title("📌 使用說明")
-    st.sidebar.markdown("""
-    1. 輸入您的 Anthropic API 密鑰（將自動保存）
-    2. 選擇兩種目標翻譯語言
-    3. 設定每種語言的翻譯風格（可選）
-    4. 上傳 SRT 格式的字幕文件
-    5. 選擇是否使用持續對話
-    6. 點擊「開始翻譯」按鈕
-    7. 等待翻譯完成後，選擇下載格式並下載翻譯後的字幕文件
-    """)
-
-    st.sidebar.title("ℹ️ 關於")
-    st.sidebar.info("""
-    本工具使用 Anthropic 的 Claude AI 模型進行字幕翻譯。
-    它支持多種語言組合，並允許自定義翻譯風格。
-    如有任何問題或建議，請聯繫開發團隊。
-    """)
+            st.error(f"Error: {e}")
 
 if __name__ == "__main__":
     multi_language_subtitle_translator()

@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import re
+import ui_utils
 
 def format_time(time):
     # 將SRT格式的時間轉換為XML格式
@@ -8,12 +9,14 @@ def format_time(time):
     return f"{int(hours):02d}:{int(minutes):02d}:{float(seconds):06.3f}"
 
 def escape_html(text):
-    return (text
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("'", "&#039;"))
+    return (
+        text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#039;")
+    )
 
 def srt_to_xml(srt_content, font_size_1, font_size_2):
     xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
@@ -55,30 +58,31 @@ def srt_to_xml(srt_content, font_size_1, font_size_2):
     return xml_content
 
 def bilingual_subtitle_resizer():
-    st.title("🦊 雙語字幕大小調整器")
-    st.write("這個工具可以幫助您調整雙語字幕的字體大小，並將 SRT 格式轉換為 XML 格式。")
+    ui_utils.render_header("📏 Subtitle Resizer", "Adjust font sizes for bilingual subtitles and convert to XML.")
 
     col1, col2 = st.columns(2)
     with col1:
-        font_size_1 = st.number_input("第一行字體大小（像素）", min_value=1, max_value=100, value=71)
+        font_size_1 = st.number_input("Font Size Line 1 (px)", min_value=1, max_value=200, value=71)
     with col2:
-        font_size_2 = st.number_input("第二行字體大小（像素）", min_value=1, max_value=100, value=45)
+        font_size_2 = st.number_input("Font Size Line 2 (px)", min_value=1, max_value=200, value=45)
 
-    uploaded_file = st.file_uploader("選擇一個 SRT 文件", type="srt")
+    uploaded_file = st.file_uploader("Upload SRT File", type="srt")
 
     if uploaded_file is not None:
         srt_content = uploaded_file.getvalue().decode("utf-8-sig")
         original_filename = uploaded_file.name
 
-        if st.button('轉換文件'):
+        if st.button('Convert to XML', type="primary"):
             xml_content = srt_to_xml(srt_content, font_size_1, font_size_2)
-            st.text_area("XML 輸出預覽", xml_content, height=300)
+            
+            st.subheader("Preview")
+            st.text_area("XML Output", xml_content, height=200)
 
             base_name = os.path.splitext(original_filename)[0]
             new_filename = f"{base_name}_resized.xml"
 
             st.download_button(
-                label="下載 XML 文件",
+                label="📥 Download XML",
                 data=xml_content.encode('utf-8'),
                 file_name=new_filename,
                 mime="application/xml"
