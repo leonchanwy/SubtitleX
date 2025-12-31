@@ -32,7 +32,7 @@ TEMPERATURE = 0.1
 BATCH_SIZE = 30
 LANGUAGE_OPTIONS = ["繁體中文", "英文", "日文", "馬來語", "廣東話口語", "德文"]
 API_PROVIDERS = ["OpenAI", "Claude"]
-REASONING_EFFORT_OPTIONS = ["none", "low", "medium", "high", "ephemeral"] # standard + user request options
+REASONING_EFFORT_OPTIONS = ["none", "minimal", "low", "medium", "high", "xhigh"]
 
 # 翻譯失敗占位字串 (統一使用)
 FAIL_MARKER_ZH = "[翻譯失敗]"
