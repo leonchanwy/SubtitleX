@@ -49,6 +49,20 @@ def init_session_state():
         st.session_state.api_provider = 'OpenAI'
 
 class SubtitleProcessor:
+    # 常見字幕編碼 (依優先順序)
+    ENCODINGS = ['utf-8-sig', 'utf-8', 'utf-16', 'cp950', 'big5', 'gb2312', 'gbk', 'shift_jis', 'latin-1']
+
+    @staticmethod
+    def decode_file(raw_bytes: bytes) -> str:
+        """嘗試多種編碼解碼檔案內容"""
+        for encoding in SubtitleProcessor.ENCODINGS:
+            try:
+                return raw_bytes.decode(encoding)
+            except (UnicodeDecodeError, LookupError):
+                continue
+        # 最後用 latin-1 強制解碼（不會失敗，但可能有亂碼）
+        return raw_bytes.decode('latin-1', errors='replace')
+
     @staticmethod
     def parse_srt(content: str) -> List[Tuple[str, str, str]]:
         content = content.replace('\r\n', '\n').strip()
@@ -555,7 +569,7 @@ def bilingual_srt_translator():
 
     if uploaded_file and api_key and st.button("開始翻譯", key="translate_button"):
         try:
-            content = uploaded_file.getvalue().decode("utf-8-sig")
+            content = SubtitleProcessor.decode_file(uploaded_file.getvalue())
             content = SubtitleProcessor.clean_text(content)
             subtitles = SubtitleProcessor.parse_srt(content)
 
