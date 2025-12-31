@@ -305,27 +305,34 @@ JSON 結構必須為：
         return m.startswith(('gpt-5', 'o1', 'o3'))
 
     def _supports_sampling_params(self, model: str, reasoning_effort: str = None) -> bool:
-        """檢查模型配置是否支援 temperature/top_p 等參數"""
+        """檢查模型配置是否支援 temperature/top_p 等參數
+
+        根據 OpenAI 官方文件：
+        - temperature/top_p/logprobs 只在 reasoning_effort="none" 時可用
+        - gpt-5.1 / gpt-5.2 預設 none -> 支援 temperature
+        - gpt-5-pro 只支援 high -> 不支援 temperature
+        - o1 / o3 預設 medium -> 不支援 temperature
+        - o1-preview / o1-mini / o3-mini 不支援 reasoning_effort，也不支援 temperature
+        """
         m = (model or "").lower()
 
-        # 1. 舊版推理模型 (o1-preview, o1-mini 等) 永遠不支援 temperature
+        # 1. 舊版推理模型 (o1-preview, o1-mini, o3-mini) 永遠不支援 temperature
         if m.startswith(('o1-preview', 'o1-mini', 'o3-mini')):
             return False
 
-        # 2. 如果設定了 reasoning_effort
+        # 2. 如果明確設定了 reasoning_effort，只有 'none' 時支援 temperature
         if reasoning_effort:
-            # 只有 'none' 模式下才支援 temperature
             return reasoning_effort == 'none'
 
-        # 3. 未設定 reasoning_effort (使用預設值)
-        # 根據使用者文件：
-        # gpt-5.1 預設 none -> 支援 temperature
-        # gpt-5.2 / gpt-5-pro 預設 medium -> 不支援 temperature
-        # o1 / o3 預設 medium -> 不支援 temperature
-        if m.startswith(('gpt-5.2', 'gpt-5-pro', 'o1', 'o3')):
+        # 3. 未設定 reasoning_effort 時，根據模型預設值判斷
+        # gpt-5-pro 只支援 high -> 不支援 temperature
+        if m.startswith('gpt-5-pro'):
+            return False
+        # o1 / o3 (非 mini/preview) 預設 medium -> 不支援 temperature
+        if m.startswith(('o1', 'o3')):
             return False
 
-        # 其他模型預設支援
+        # gpt-5.1 / gpt-5.2 預設 none，以及其他非推理模型 -> 支援 temperature
         return True
 
     def _call_openai_api(self, messages: List[Dict], model: str, client: OpenAI,
