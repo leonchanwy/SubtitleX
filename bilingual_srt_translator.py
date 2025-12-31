@@ -24,8 +24,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # 常量
-DEFAULT_OPENAI_MODEL = "gpt-4.1-2025-04-14"
-DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_OPENAI_MODEL = "gpt-5.2"
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-5"
 MAX_TOKENS = 4000
 TEMPERATURE = 0.1
 BATCH_SIZE = 30
@@ -39,11 +39,8 @@ MISSING_MARKER_ZH = "[翻譯缺失]"
 MISSING_MARKER_EN = "[Translation missing]"
 # 包含已知穩定模型及未來可能模型
 CLAUDE_MODELS = [
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
-    "claude-3-7-sonnet-20250219",
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-haiku-20241022",
+    "claude-opus-4-5",
+    "claude-haiku-4-5",
 ]
 
 def init_session_state():
