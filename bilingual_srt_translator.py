@@ -298,7 +298,7 @@ JSON 結構必須為：
         """檢測是否為 reasoning 模型 (o1/o3 等不支援 temperature 的模型)"""
         model_lower = model.lower()
         # o1, o3, o1-mini, o1-preview, o3-mini 等都是 reasoning 模型
-        return model_lower.startswith(('o1', 'o3'))
+        return model_lower.startswith(('o1', 'o3', 'gpt-5.2', 'gpt-5.1', 'gpt-5'))
 
     def _call_openai_api(self, messages: List[Dict], model: str, client: OpenAI,
                          response_format: dict = None) -> str:
