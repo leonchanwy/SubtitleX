@@ -5,8 +5,50 @@ import gdown
 import time
 import base64
 from io import BytesIO
-from generate_subtitles import compress_audio, transcribe_audio, translate_audio
+from pydub import AudioSegment
+from openai import OpenAI
 import ui_utils
+
+def compress_audio(input_path):
+    """Compress audio to MP3 32k mono to fit within API limits."""
+    output_path = f"{os.path.splitext(input_path)[0]}_compressed.mp3"
+    try:
+        audio = AudioSegment.from_file(input_path)
+        # Convert to mono and set frame rate to 16kHz (speech standard) to save space
+        audio = audio.set_channels(1).set_frame_rate(16000)
+        audio.export(output_path, format="mp3", bitrate="32k")
+        return output_path
+    except Exception as e:
+        raise RuntimeError(f"Audio compression failed: {e}")
+
+def transcribe_audio(file_path, output_path, language, prompt, api_key, temperature):
+    """Transcribe audio using OpenAI Whisper."""
+    client = OpenAI(api_key=api_key)
+    with open(file_path, "rb") as audio_file:
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            language=language,
+            prompt=prompt,
+            temperature=temperature,
+            response_format="srt"
+        )
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(transcript)
+
+def translate_audio(file_path, output_path, prompt, api_key, temperature):
+    """Translate audio to English using OpenAI Whisper."""
+    client = OpenAI(api_key=api_key)
+    with open(file_path, "rb") as audio_file:
+        translation = client.audio.translations.create(
+            model="whisper-1",
+            file=audio_file,
+            prompt=prompt,
+            temperature=temperature,
+            response_format="srt"
+        )
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(translation)
 
 def ai_subtitle_generator():
     ui_utils.render_header("🚀 AI Subtitle Generator", "Generate subtitles from audio or video files using OpenAI's Whisper model.")
