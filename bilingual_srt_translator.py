@@ -11,7 +11,12 @@ import anthropic
 
 # 自定義例外：API 配額用盡
 class QuotaExceededError(Exception):
-    """當 OpenAI API 配額用盡時拋出"""
+    """當 API 配額用盡時拋出"""
+    pass
+
+# 自定義例外：認證失敗
+class AuthenticationError(Exception):
+    """當 API Key 無效時拋出"""
     pass
 
 # 設置日誌
@@ -183,10 +188,21 @@ JSON 結構必須為：
             return True
         return False
 
+    def _check_auth_error(self, error: Exception) -> bool:
+        """檢查是否為認證錯誤（API Key 無效）"""
+        error_str = str(error).lower()
+        if 'authentication_error' in error_str or 'invalid x-api-key' in error_str:
+            return True
+        if 'invalid api key' in error_str or '401' in error_str:
+            return True
+        if hasattr(error, 'status_code') and error.status_code == 401:
+            return True
+        return False
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=60),
-        retry=retry_if_not_exception_type(QuotaExceededError)
+        retry=retry_if_not_exception_type((QuotaExceededError, AuthenticationError))
     )
     def _translate_batch(self, batch_subtitles: List[Tuple[str, str, str]], target_lang1: str, target_lang2: str, 
                          prompt1: str, prompt2: str, model: str, use_history: bool = True) -> List[Dict[str, str]]:
@@ -237,6 +253,9 @@ JSON 結構必須為：
             return self._parse_translation_response(response_content, batch_subtitles, target_lang1, target_lang2)
 
         except (RateLimitError, APIError, anthropic.RateLimitError, anthropic.APIError, Exception) as e:
+            if self._check_auth_error(e):
+                logger.error(f"❌ API Key 無效！")
+                raise AuthenticationError("API Key 無效，請檢查您的 API Key 是否正確。") from e
             if self._check_quota_error(e):
                 logger.error(f"❌ API 配額已用盡！")
                 raise QuotaExceededError("API 配額已用盡！") from e
@@ -539,6 +558,9 @@ def bilingual_srt_translator():
             if len(st.session_state.translated_subtitles) != len(subtitles):
                 st.warning(f"⚠️ 警告：原文有 {len(subtitles)} 句，但翻譯結果只有 {len(st.session_state.translated_subtitles)} 句。輸出可能不完整。")
 
+        except AuthenticationError as e:
+            st.error(f"❌ **API Key 無效！**\n\n{str(e)}\n\n請確認您輸入的是正確的 {api_provider} API Key。")
+            logger.error("API Key 無效")
         except QuotaExceededError as e:
             billing_url = "https://console.anthropic.com/settings/billing" if api_provider == "Claude" else "https://platform.openai.com/account/billing"
             st.error(f"❌ **API 配額已用盡！**\n\n{str(e)}\n\n[前往計費設置]({billing_url})")
