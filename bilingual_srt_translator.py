@@ -224,9 +224,10 @@ JSON 結構必須為：
         wait=wait_exponential(multiplier=1, min=4, max=60),
         retry=retry_if_not_exception_type((QuotaExceededError, AuthenticationError))
     )
-    def _translate_batch(self, batch_subtitles: List[Tuple[str, str, str]], target_lang1: str, target_lang2: str, 
-                         prompt1: str, prompt2: str, model: str, use_history: bool = True) -> List[Dict[str, str]]:
-        
+    def _translate_batch(self, batch_subtitles: List[Tuple[str, str, str]], target_lang1: str, target_lang2: str,
+                         prompt1: str, prompt2: str, model: str, use_history: bool = True,
+                         context_subtitles: List[Tuple[str, str, str]] = None) -> List[Dict[str, str]]:
+
         # 建立局部 client 以確保線程安全 (並行模式下)
         if self.provider == "OpenAI":
             local_client = OpenAI(api_key=self.api_key)
@@ -234,12 +235,23 @@ JSON 結構必須為：
             local_client = anthropic.Anthropic(api_key=self.api_key)
 
         system_prompt = self._create_system_prompt(target_lang1, target_lang2, prompt1, prompt2)
-        
+
         input_data = [
             {"id": sid, "text": text}
             for sid, _, text in batch_subtitles
         ]
-        user_content_raw = f"翻譯以下字幕 (JSON):\n{json.dumps(input_data, ensure_ascii=False, indent=2)}"
+
+        # 構建用戶內容（可含上下文）
+        user_content_parts = []
+
+        # 並行模式下加入前情提要
+        if context_subtitles:
+            context_text = "\n".join([f"[{sid}] {text}" for sid, _, text in context_subtitles])
+            user_content_parts.append(f"【前情提要 - 僅供參考，不需翻譯】\n{context_text}\n")
+
+        user_content_parts.append(f"翻譯以下字幕 (JSON):\n{json.dumps(input_data, ensure_ascii=False, indent=2)}")
+        user_content_raw = "\n".join(user_content_parts)
+
         # 強調 JSON 指令
         user_content_with_instruction = user_content_raw + "\n\n請直接輸出符合格式的 JSON，不要包含任何解釋、備註或 markdown 標籤。"
 
@@ -437,17 +449,25 @@ JSON 結構必須為：
         completed_count = 0
 
         if not use_continuous_conversation:
-            # 並行模式 (不使用歷史)
-            max_workers = 5 
+            # 並行模式 (不使用歷史，但加入前情提要)
+            max_workers = 5
+            context_size = 3  # 前情提要的句數
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # 這裡不需要傳遞 self.client，因為 _translate_batch 會自己建立 local_client
-                future_to_batch = {
-                    executor.submit(
-                        self._translate_batch, 
-                        batch, target_lang1, target_lang2, prompt1, prompt2, model, False
-                    ): (start_idx, batch) 
-                    for start_idx, batch in batches
-                }
+                future_to_batch = {}
+                for start_idx, batch in batches:
+                    # 取前 context_size 句作為上下文（第一個 batch 沒有上下文）
+                    if start_idx > 0:
+                        context_start = max(0, start_idx - context_size)
+                        context = subtitles[context_start:start_idx]
+                    else:
+                        context = None
+
+                    future = executor.submit(
+                        self._translate_batch,
+                        batch, target_lang1, target_lang2, prompt1, prompt2, model, False, context
+                    )
+                    future_to_batch[future] = (start_idx, batch)
                 for future in concurrent.futures.as_completed(future_to_batch):
                     start_idx, batch = future_to_batch[future]
                     try:
