@@ -25,8 +25,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # 常量
-DEFAULT_OPENAI_MODEL = "gpt-4o"
-DEFAULT_CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
+DEFAULT_OPENAI_MODEL = "gpt-5.2"
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-5"
 MAX_TOKENS = 4000
 TEMPERATURE = 0.1
 BATCH_SIZE = 30
@@ -38,10 +38,12 @@ FAIL_MARKER_ZH = "[翻譯失敗]"
 FAIL_MARKER_EN = "[Translation failed]"
 MISSING_MARKER_ZH = "[翻譯缺失]"
 MISSING_MARKER_EN = "[Translation missing]"
-# 包含已知穩定模型及未來可能模型
+
+# Claude 可用模型
 CLAUDE_MODELS = [
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-haiku-20241022",
+    "claude-sonnet-4-5",
+    "claude-opus-4-5",
+    "claude-haiku-4-5",
 ]
 
 class SubtitleProcessor:
@@ -502,10 +504,6 @@ JSON 結構必須為：
 
 def bilingual_srt_translator():
     ui_utils.render_header("🌐 Bilingual Subtitle Translator", "Translate your subtitles into two languages simultaneously using AI.")
-    
-    # Check API keys first
-    if not ui_utils.validate_api_inputs(["OpenAI", "Claude"]):
-        st.stop()
 
     # Provider Selection
     col_api, col_model = st.columns(2)
@@ -515,9 +513,12 @@ def bilingual_srt_translator():
             options=API_PROVIDERS,
             help="Choose between OpenAI (GPT) or Anthropic (Claude)."
         )
-    
-    # Get API key from session state
+
+    # Get API key from session state - only check selected provider
     api_key = ui_utils.get_api_key(api_provider)
+    if not api_key:
+        st.warning(f"⚠️ 請在側邊欄設定 {api_provider} API Key")
+        st.stop()
     
     # Initialize Translator to get models
     try:
@@ -638,18 +639,15 @@ def bilingual_srt_translator():
             full_srt = SubtitleProcessor.format_srt(orig_subs, trans_subs, format_type, l1, l2)
             file_name = f"subtitle_{l1}_{l2 if l2 else ''}.srt".replace("__", "_")
 
-            col_preview, col_dl = st.columns([2, 1])
-            with col_preview:
-                st.text_area("Preview (First 10 lines)", value="\n".join(full_srt.split("\n")[:20]), height=200)
-            
-            with col_dl:
-                st.download_button(
-                    label="📥 Download SRT",
-                    data=full_srt,
-                    file_name=file_name,
-                    mime="text/plain",
-                    use_container_width=True
-                )
+            st.text_area("輸出預覽", value=full_srt, height=400)
+
+            st.download_button(
+                label="📥 Download SRT",
+                data=full_srt,
+                file_name=file_name,
+                mime="text/plain",
+                use_container_width=True
+            )
         except Exception as e:
             st.error(f"Error generating download: {e}")
 
