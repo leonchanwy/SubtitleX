@@ -521,10 +521,45 @@ JSON 結構必須為：
         self.conversation_history = []
 
 def validate_api_key(api_key: str) -> bool:
+    """基本格式驗證"""
     if not api_key or not isinstance(api_key, str):
         return False
     api_key = api_key.strip()
     return len(api_key) > 0
+
+def verify_api_key(api_key: str, provider: str) -> Tuple[bool, str]:
+    """
+    實際調用 API 驗證 Key 是否有效及配額狀態
+    返回: (是否有效, 狀態訊息)
+    """
+    if not validate_api_key(api_key):
+        return False, ""
+
+    try:
+        if provider == "OpenAI":
+            client = OpenAI(api_key=api_key)
+            # 用最小請求測試 API Key
+            client.models.list()
+            return True, "✅ API Key 有效"
+        else:  # Claude
+            client = anthropic.Anthropic(api_key=api_key)
+            # Claude 用簡單訊息測試
+            client.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=10,
+                messages=[{"role": "user", "content": "hi"}]
+            )
+            return True, "✅ API Key 有效"
+    except Exception as e:
+        error_str = str(e).lower()
+        if 'authentication' in error_str or 'invalid' in error_str or '401' in error_str:
+            return False, "❌ API Key 無效"
+        elif 'insufficient_quota' in error_str or 'exceeded' in error_str or 'billing' in error_str:
+            return False, "❌ API 配額不足，請檢查帳戶餘額"
+        elif 'rate_limit' in error_str:
+            return True, "⚠️ API Key 有效（但目前速率受限）"
+        else:
+            return False, f"❌ 驗證失敗: {str(e)[:50]}"
 
 def bilingual_srt_translator():
     init_session_state()
@@ -543,6 +578,9 @@ def bilingual_srt_translator():
             del st.session_state.available_models
         if 'translator' in st.session_state:
             del st.session_state.translator
+        # 切換 provider 時清除驗證狀態
+        if 'api_key_status' in st.session_state:
+            del st.session_state.api_key_status
 
     # 根據 provider 使用對應的 API Key
     api_key_state = 'openai_api_key' if api_provider == 'OpenAI' else 'claude_api_key'
@@ -550,10 +588,28 @@ def bilingual_srt_translator():
 
     api_key_label = f"{api_provider} API Key"
     api_key = st.text_input(api_key_label, value=current_key, type="password")
+
+    # API Key 變更時自動驗證
     if api_key != current_key:
         st.session_state[api_key_state] = api_key
         if 'available_models' in st.session_state:
             del st.session_state.available_models
+        # 自動驗證新輸入的 Key
+        if api_key and len(api_key.strip()) > 10:  # 基本長度檢查
+            with st.spinner("驗證 API Key..."):
+                is_valid, status_msg = verify_api_key(api_key, api_provider)
+                st.session_state.api_key_status = status_msg
+                st.session_state.api_key_verified = is_valid
+        else:
+            st.session_state.api_key_status = ""
+            st.session_state.api_key_verified = False
+
+    # 顯示驗證狀態
+    if st.session_state.get('api_key_status'):
+        if st.session_state.get('api_key_verified', False):
+            st.success(st.session_state.api_key_status)
+        else:
+            st.error(st.session_state.api_key_status)
 
     api_key_valid = validate_api_key(api_key)
 
@@ -562,9 +618,9 @@ def bilingual_srt_translator():
     if 'available_models' not in st.session_state:
         st.session_state.available_models = [default_model]
 
-    if api_key_valid and len(st.session_state.available_models) == 1:
+    # 只在驗證成功後才獲取模型列表
+    if api_key_valid and st.session_state.get('api_key_verified', False) and len(st.session_state.available_models) == 1:
         try:
-            # 這裡只為了獲取模型列表，暫時建立一個 translator
             temp_translator = SubtitleTranslator(api_key, api_provider)
             fetched_models = temp_translator.get_available_models()
             if fetched_models:
@@ -572,7 +628,7 @@ def bilingual_srt_translator():
                 if default_model not in st.session_state.available_models:
                     st.session_state.available_models.insert(0, default_model)
         except Exception as e:
-            logger.warning(f"無法自動獲取模型列表: {e}")
+            st.warning(f"無法獲取模型列表: {e}")
 
     try:
         default_index = st.session_state.available_models.index(default_model)
@@ -674,26 +730,20 @@ def bilingual_srt_translator():
             [f"原文 + {trans_lang1}", f"原文 + {trans_lang2}", f"{trans_lang1} + {trans_lang2}", f"僅 {trans_lang1}", f"僅 {trans_lang2}"]
         )
 
-        preview_subtitles = st.session_state.original_subtitles[:5]
-        preview_translations = st.session_state.translated_subtitles[:5]
-
         try:
             if "原文" in download_option:
                 lang = trans_lang1 if trans_lang1 in download_option else trans_lang2
-                preview_srt = SubtitleProcessor.format_srt(preview_subtitles, preview_translations, "bilingual", lang)
                 full_srt = SubtitleProcessor.format_srt(st.session_state.original_subtitles, st.session_state.translated_subtitles, "bilingual", lang)
                 file_name = f"原文_{lang}.srt"
             elif "+" in download_option:
-                preview_srt = SubtitleProcessor.format_srt(preview_subtitles, preview_translations, "dual_lang", trans_lang1, trans_lang2)
                 full_srt = SubtitleProcessor.format_srt(st.session_state.original_subtitles, st.session_state.translated_subtitles, "dual_lang", trans_lang1, trans_lang2)
                 file_name = f"{trans_lang1}_{trans_lang2}.srt"
             else:
                 lang = trans_lang1 if trans_lang1 in download_option else trans_lang2
-                preview_srt = SubtitleProcessor.format_srt(preview_subtitles, preview_translations, "single", lang)
                 full_srt = SubtitleProcessor.format_srt(st.session_state.original_subtitles, st.session_state.translated_subtitles, "single", lang)
                 file_name = f"{lang}.srt"
 
-            st.text_area("翻譯預覽", value=preview_srt + "\n...", height=300)
+            st.text_area("翻譯預覽", value=full_srt, height=400)
 
             st.download_button(
                 label=f"📥 下載 {download_option} 字幕",
