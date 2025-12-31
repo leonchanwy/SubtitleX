@@ -32,6 +32,7 @@ TEMPERATURE = 0.1
 BATCH_SIZE = 30
 LANGUAGE_OPTIONS = ["繁體中文", "英文", "日文", "馬來語", "廣東話口語", "德文"]
 API_PROVIDERS = ["OpenAI", "Claude"]
+REASONING_EFFORT_OPTIONS = ["none", "low", "medium", "high", "ephemeral"] # standard + user request options
 
 # 翻譯失敗占位字串 (統一使用)
 FAIL_MARKER_ZH = "[翻譯失敗]"
@@ -206,7 +207,8 @@ JSON 結構必須為：
     )
     def _translate_batch(self, batch_subtitles: List[Tuple[str, str, str]], target_lang1: str, target_lang2: str,
                          prompt1: str, prompt2: str, model: str, use_history: bool = True,
-                         context_subtitles: List[Tuple[str, str, str]] = None) -> List[Dict[str, str]]:
+                         context_subtitles: List[Tuple[str, str, str]] = None,
+                         reasoning_effort: str = None) -> List[Dict[str, str]]:
 
         if self.provider == "OpenAI":
             local_client = OpenAI(api_key=self.api_key)
@@ -246,7 +248,8 @@ JSON 結構必須為：
 
                 openai_messages.append({"role": "user", "content": user_content_with_instruction})
                 schema = self._build_translation_schema(target_lang1, target_lang2)
-                response_content = self._call_openai_api(openai_messages, model, client=local_client, response_format=schema)
+                response_content = self._call_openai_api(openai_messages, model, client=local_client, 
+                                                       response_format=schema, reasoning_effort=reasoning_effort)
 
             if use_history:
                 self.conversation_history.append({"role": "user", "content": user_content_raw})
@@ -294,18 +297,34 @@ JSON 結構必須為：
             }
         }
 
-    def _is_reasoning_model(self, model: str) -> bool:
-        """檢測是否為 reasoning 模型 (o1/o3 等不支援 temperature 的模型)"""
-        model_lower = model.lower()
-        # o1, o3, o1-mini, o1-preview, o3-mini 等都是 reasoning 模型
-        return model_lower.startswith(('o1', 'o3', 'gpt-5.2', 'gpt-5.1', 'gpt-5'))
+    def _supports_sampling_params(self, model: str, reasoning_effort: str = None) -> bool:
+        """檢查模型配置是否支援 temperature/top_p 等參數"""
+        m = (model or "").lower()
+        
+        # 1. 舊版推理模型 (o1-preview, o1-mini 等) 永遠不支援 temperature
+        if m.startswith(('o1-preview', 'o1-mini', 'o3-mini')):
+            return False
+            
+        # 2. 如果設定了 reasoning_effort
+        if reasoning_effort:
+            # 只有 'none' 模式下才支援 temperature
+            return reasoning_effort == 'none'
+            
+        # 3. 未設定 reasoning_effort (使用預設值)
+        # 根據使用者文件：
+        # gpt-5.1 預設 none -> 支援 temperature
+        # gpt-5.2 / gpt-5-pro 預設 medium -> 不支援 temperature
+        # o1 / o3 預設 medium -> 不支援 temperature
+        if m.startswith(('gpt-5.2', 'gpt-5-pro', 'o1', 'o3')):
+            return False
+            
+        # 其他模型預設支援
+        return True
 
     def _call_openai_api(self, messages: List[Dict], model: str, client: OpenAI,
-                         response_format: dict = None) -> str:
+                         response_format: dict = None, reasoning_effort: str = None) -> str:
         if response_format is None:
             response_format = {"type": "json_object"}
-
-        is_reasoning = self._is_reasoning_model(model)
 
         def make_request(fmt):
             params = {
@@ -313,9 +332,15 @@ JSON 結構必須為：
                 "messages": messages,
                 "response_format": fmt
             }
-            # Reasoning 模型 (o1/o3) 不支援 temperature 參數
-            if not is_reasoning:
+            
+            # 加入 reasoning_effort 參數
+            if reasoning_effort:
+                params["reasoning_effort"] = reasoning_effort
+            
+            # 決定是否加入 temperature
+            if self._supports_sampling_params(model, reasoning_effort):
                 params["temperature"] = TEMPERATURE
+                
             try:
                 return client.chat.completions.create(**params, max_completion_tokens=MAX_TOKENS)
             except TypeError:
@@ -325,12 +350,15 @@ JSON 結構必須為：
             response = make_request(response_format)
         except Exception as e:
             error_str = str(e).lower()
+            
+            # 自動修復：如果不支援 json_schema，降級為 json_object
             if response_format.get("type") == "json_schema" and (
                 "response_format" in error_str or
                 "json_schema" in error_str or
-                "not supported" in error_str
+                "not supported" in error_str or
+                "unsupported parameter" in error_str
             ):
-                logger.warning(f"模型 {model} 不支援 json_schema，降級為 json_object")
+                logger.warning(f"模型 {model} 不支援 json_schema 或參數錯誤，嘗試降級為 json_object")
                 response = make_request({"type": "json_object"})
             else:
                 raise
@@ -410,7 +438,8 @@ JSON 結構必須為：
                             prompt1: str, prompt2: str,
                             progress_callback, model: str,
                             use_continuous_conversation: bool = True,
-                            status_callback=None) -> Tuple[List[Dict[str, str]], List[Dict]]:
+                            status_callback=None,
+                            reasoning_effort: str = None) -> Tuple[List[Dict[str, str]], List[Dict]]:
         
         self.reset_conversation()
         translated_subtitles = [None] * len(subtitles)
@@ -450,7 +479,7 @@ JSON 結構必須為：
                     update_batch_status(batch_idx, "running")
                     future = executor.submit(
                         self._translate_batch,
-                        batch, target_lang1, target_lang2, prompt1, prompt2, model, False, context
+                        batch, target_lang1, target_lang2, prompt1, prompt2, model, False, context, reasoning_effort
                     )
                     future_to_batch[future] = (batch_idx, start_idx, batch)
 
@@ -479,7 +508,7 @@ JSON 結構必須為：
             for batch_idx, (start_idx, batch) in enumerate(batches):
                 update_batch_status(batch_idx, "running")
                 try:
-                    results = self._translate_batch(batch, target_lang1, target_lang2, prompt1, prompt2, model, True)
+                    results = self._translate_batch(batch, target_lang1, target_lang2, prompt1, prompt2, model, True, None, reasoning_effort)
                     for j, res in enumerate(results):
                         if start_idx + j < total:
                             translated_subtitles[start_idx + j] = res
@@ -543,6 +572,17 @@ def bilingual_srt_translator():
     with col_model:
         model_name = st.selectbox("Model", options=available_models)
 
+    reasoning_effort = None
+    if api_provider == "OpenAI":
+        # 允許使用者設定推理強度 (針對 o1/o3/gpt-5.x 等模型)
+        # 設定為 'none' 時才允許 temperature 控制
+        reasoning_effort = st.selectbox(
+            "Reasoning Effort",
+            options=REASONING_EFFORT_OPTIONS,
+            index=REASONING_EFFORT_OPTIONS.index("none"),
+            help="控制推理深度。設為 'none' 時可使用 Temperature 控制 (若模型支援)。設為 low/medium/high 時將忽略 Temperature。"
+        )
+
     # Language Settings
     st.subheader("Language Settings")
     col1, col2 = st.columns(2)
@@ -598,7 +638,8 @@ def bilingual_srt_translator():
                 translated, batch_statuses = translator.translate_subtitles(
                     subtitles, target_lang1, target_lang2, prompt1, prompt2,
                     progress_bar.progress, model_name, use_continuous_conversation,
-                    status_callback=display_batch_status
+                    status_callback=display_batch_status,
+                    reasoning_effort=reasoning_effort
                 )
                 
                 # Store results in session state
