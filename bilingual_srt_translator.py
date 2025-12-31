@@ -3,8 +3,13 @@ import re
 import time
 import logging
 from typing import List, Tuple, Dict, Optional
-from tenacity import retry, stop_after_attempt, wait_exponential
-from openai import OpenAI
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
+from openai import OpenAI, RateLimitError, APIError
+
+# 自定義例外：API 配額用盡
+class QuotaExceededError(Exception):
+    """當 OpenAI API 配額用盡時拋出"""
+    pass
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -91,14 +96,27 @@ class SubtitleTranslator:
         if len(self.conversation_history) > max_messages:
             self.conversation_history = self.conversation_history[-max_messages:]
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=60))
+    def _check_quota_error(self, error: Exception) -> bool:
+        """檢查是否為配額用盡錯誤"""
+        error_str = str(error).lower()
+        if 'insufficient_quota' in error_str or 'exceeded your current quota' in error_str:
+            return True
+        if hasattr(error, 'code') and error.code == 'insufficient_quota':
+            return True
+        return False
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=60),
+        retry=retry_if_not_exception_type(QuotaExceededError)
+    )
     def _translate_batch(self, texts: List[str], target_lang1: str, target_lang2: str, prompt1: str, prompt2: str) -> List[Dict[str, str]]:
         system_prompt = self._create_system_prompt(target_lang1, target_lang2, prompt1, prompt2)
 
         self._manage_conversation_history()
 
         combined_texts = "\n\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
-        
+
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"翻譯以下字幕：\n\n{combined_texts}"}
@@ -127,7 +145,24 @@ class SubtitleTranslator:
                     })
 
             return translations
+        except (RateLimitError, APIError) as e:
+            # 檢查是否為配額用盡錯誤
+            if self._check_quota_error(e):
+                logger.error(f"❌ API 配額已用盡！錯誤：{str(e)}")
+                raise QuotaExceededError(
+                    "OpenAI API 配額已用盡！請檢查您的帳戶餘額和計費詳情。\n"
+                    "請訪問 https://platform.openai.com/account/billing 查看詳情。"
+                ) from e
+            logger.error(f"API 錯誤：{str(e)}")
+            raise
         except Exception as e:
+            # 對其他錯誤也檢查是否為配額問題
+            if self._check_quota_error(e):
+                logger.error(f"❌ API 配額已用盡！錯誤：{str(e)}")
+                raise QuotaExceededError(
+                    "OpenAI API 配額已用盡！請檢查您的帳戶餘額和計費詳情。\n"
+                    "請訪問 https://platform.openai.com/account/billing 查看詳情。"
+                ) from e
             logger.error(f"API 錯誤：{str(e)}")
             raise
 
@@ -147,9 +182,9 @@ class SubtitleTranslator:
                 })
         return parsed
 
-    def translate_subtitles(self, subtitles: List[Tuple[str, str, str]], 
-                            target_lang1: str, target_lang2: str, 
-                            prompt1: str, prompt2: str, 
+    def translate_subtitles(self, subtitles: List[Tuple[str, str, str]],
+                            target_lang1: str, target_lang2: str,
+                            prompt1: str, prompt2: str,
                             progress_callback) -> List[Dict[str, str]]:
         translated_subtitles = []
         total = len(subtitles)
@@ -157,10 +192,14 @@ class SubtitleTranslator:
         for i in range(0, total, BATCH_SIZE):
             batch = subtitles[i:i+BATCH_SIZE]
             texts = [text for _, _, text in batch]
-            
+
             try:
                 translations = self._translate_batch(texts, target_lang1, target_lang2, prompt1, prompt2)
                 translated_subtitles.extend(translations)
+            except QuotaExceededError:
+                # 配額用盡，立即停止並向上拋出錯誤
+                logger.error("❌ 偵測到 API 配額用盡，立即停止翻譯！")
+                raise
             except Exception as e:
                 logger.error(f"翻譯批次 {i//BATCH_SIZE + 1} 失敗：{str(e)}")
                 placeholder_translations = [
@@ -233,10 +272,10 @@ def bilingual_srt_translator():
             content = uploaded_file.getvalue().decode("utf-8-sig")
             content = SubtitleProcessor.clean_text(content)
             subtitles = SubtitleProcessor.parse_srt(content)
-            
+
             if 'translator' not in st.session_state:
                 st.session_state.translator = SubtitleTranslator(api_key)
-            
+
             if not use_continuous_conversation:
                 st.session_state.translator.reset_conversation()
 
@@ -254,6 +293,18 @@ def bilingual_srt_translator():
             processing_time = end_time - start_time
             status_text.success(f"✅ 翻譯完成！總處理時間：{processing_time:.2f} 秒")
 
+        except QuotaExceededError as e:
+            st.error(f"""
+            ❌ **API 配額已用盡！翻譯已停止。**
+
+            {str(e)}
+
+            **解決方案：**
+            1. 登入 [OpenAI Platform](https://platform.openai.com/account/billing)
+            2. 檢查您的帳戶餘額
+            3. 添加付款方式或購買更多額度
+            """)
+            logger.error("API 配額用盡，翻譯已停止")
         except Exception as e:
             st.error(f"❌ 處理過程中發生錯誤：{str(e)}")
             logger.exception("翻譯過程中發生異常")
